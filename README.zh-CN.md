@@ -102,6 +102,8 @@ while (true) {
 
 不要直接读完整仓库。先扫一遍 **[ARCHITECTURE.md](./ARCHITECTURE.md)** 建立整体概念图，再新建空项目，按 **[LEARNING.md](./LEARNING.md)** 的里程碑自己写一遍。
 
+如果想按照原作者的真实开发历史理解“为什么先做这一层、下一层如何演进”，可以直接看 **[SOURCE_STUDY_ROADMAP.zh-CN.md](./SOURCE_STUDY_ROADMAP.zh-CN.md)**。这份路线按 27 个主线 commit 组织源码阅读、实验和面试自测。
+
 ## 推荐阅读顺序
 
 ```text

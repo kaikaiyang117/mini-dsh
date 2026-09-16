@@ -1,32 +1,25 @@
-name: Import upstream mini-dsh
+name: import-upstream
 
-on:
+"on":
   push:
-    branches: [main]
+    branches:
+      - main
 
 permissions:
   contents: write
 
 jobs:
-  import:
-    if: github.event.head_commit.message == 'chore: import upstream mini-dsh'
+  sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout target repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Clone upstream repository
+      - name: Clone upstream
         run: git clone --depth 1 https://github.com/huangjunsen0406/mini-dsh.git ../upstream
-
-      - name: Replace target tree with upstream snapshot
+      - name: Sync snapshot
         run: |
           rsync -a --delete --exclude='.git' ../upstream/ ./
-          git status --short
-
-      - name: Commit imported snapshot
-        run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A

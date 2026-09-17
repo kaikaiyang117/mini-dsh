@@ -104,6 +104,8 @@ while (true) {
 
 如果想按照原作者的真实开发历史理解“为什么先做这一层、下一层如何演进”，可以直接看 **[SOURCE_STUDY_ROADMAP.zh-CN.md](./SOURCE_STUDY_ROADMAP.zh-CN.md)**。这份路线按 27 个主线 commit 组织源码阅读、实验和面试自测。
 
+如果已经理解当前最小 Harness，并准备继续把它扩展成自己的 Agent Runtime，请按 **[DEVELOPMENT_ROADMAP.zh-CN.md](./DEVELOPMENT_ROADMAP.zh-CN.md)** 推进。该路线以当前代码为基线，对照成熟 DSH 的生产能力，分阶段实现 Session Persistence、Run Controller、Tool Runtime V2、Parallel Tool Calls、Context Compaction、MCP 生命周期，并进一步完成 Progressive Tool Disclosure、Semantic Progress Detection、Agent Evaluation 与 Fault Injection。
+
 ## 推荐阅读顺序
 
 ```text

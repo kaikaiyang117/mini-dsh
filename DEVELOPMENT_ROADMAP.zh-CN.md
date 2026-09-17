@@ -1,56 +1,46 @@
-# mini-dsh 后续开发路线：从学习型 Harness 到可评测 Agent Runtime
+# mini-dsh 后续开发路线：从最小 Harness 到可评测 Coding Agent Harness
 
-> 文档定位：本文件用于指导 `kaikaiyang117/mini-dsh` 后续开发。它不是功能愿望清单，而是工程实施路线图：说明当前项目已经有什么、还缺什么、为什么要改、建议如何改、每个阶段应该达到什么效果，以及最终如何形成可验证、可面试、可写入简历的个人贡献。
+> 本文档用于指导 `kaikaiyang117/mini-dsh` 后续开发。目标不是复刻完整 DeepSeek Harness，而是以当前最小 Harness 为基线，参考官方 DSH 已验证的核心抽象，自主实现一套可恢复、可控、可扩展、可评测的轻量级 Coding Agent Harness。
 
 ---
 
-## 0. 项目目标
+## 0. 最终目标
 
-当前 mini-dsh 最有价值的地方，是它用很少的代码把 Agent Harness 的核心链路讲清楚：
+项目顶层定位统一使用 **Agent Harness**；`Runtime` 用来描述 Harness 内部具体执行层。
 
-```text
-Cordis Context / Plugin / Service
-            │
-            ├── Session Event Log
-            ├── Tool Runtime
-            ├── System Prompt
-            ├── LLM Provider
-            └── Agent Loop
-                    │
-                    └── Model -> Tool -> Model -> Answer
-```
+最终定位：
 
-后续开发的目标不是复刻完整 DeepSeek Harness，也不是堆叠 Web UI、Browser Use、Computer Use、RAG、多 Agent 等表面功能，而是基于这个最小内核，自己从 0 实现一套关键的 Agent Runtime 工程能力。
-
-最终希望把项目定位升级为：
-
-> **A lightweight Agent Runtime for reliable long-horizon execution, progressive tool discovery, and reproducible evaluation.**
+> **A lightweight Coding Agent Harness for reliable long-horizon execution, progressive tool discovery and reproducible evaluation.**
 >
-> 面向长任务执行、工具规模化与可重复评测的轻量级 Agent Runtime。
+> 面向长任务执行、工具规模化与可重复评测的轻量级 Coding Agent Harness。
 
-整个项目分为三层：
+项目最终分成三层：
 
 ```text
-第一层：原始 mini-dsh 核心
-────────────────────────
+第一层：当前 mini-dsh 最小 Harness
+────────────────────────────
+Cordis Context / Plugin / Service
 Session Event Log
+System Prompt
 Tool Registry
-LLM Adapter
+LLM Provider Adapter
 Agent Loop
-Cordis Plugin System
+DeepSeek Streaming
+Bash / File Tools
+MCP Plugin Integration
 
-第二层：自己实现的 Runtime 基础设施
-────────────────────────
+第二层：参考成熟 Harness 自主实现的工程能力
+────────────────────────────
 Session Persistence / Resume
 Run Controller / Budget
 Tool Validation / Timeout / Cancellation
 Parallel Tool Calls
 Context Compaction
-MCP Lifecycle
+Managed MCP Lifecycle
 Trace / Metrics
 
-第三层：项目自己的增强方向
-────────────────────────
+第三层：项目自己的重点增强
+────────────────────────────
 Progressive Tool Disclosure
 Lazy MCP / Tool Search
 Semantic Progress Detection
@@ -58,247 +48,276 @@ Agent Evaluation
 Fault Injection
 ```
 
-第一层负责“理解 Agent 怎么跑起来”，第二层负责“让 Agent Runtime 可以可靠运行”，第三层负责“形成区别于普通 mini Harness 的个人设计”。
+开发原则：
+
+1. 官方 DeepSeek Harness 是**能力地图与设计参考**，不是源码复制目标；
+2. 每个核心模块自己设计接口、实现代码、补测试；
+3. 每个“优化”必须有 Baseline 与可量化结果；
+4. Session Event Log 始终保持权威事实源；
+5. 不为了“功能多”引入与主线无关的大型模块。
 
 ---
 
 # 1. 当前项目现状
 
-## 1.1 当前已经具备的核心能力
+## 1.1 已有能力
 
-当前仓库是一个按 DeepSeek Harness 概念手写的最小 Runtime，核心能力包括：
-
-1. Cordis Context / Plugin / Service；
-2. Session Event Log 与 `deriveMessages()`；
-3. Tool Registry：`register / schemas / execute`；
-4. LLM Provider Adapter；
-5. Agent Loop：`model -> tool -> model -> answer`；
-6. DeepSeek Streaming Adapter；
-7. Bash / File 工具；
-8. 应用层 workspace 路径限制与危险命令检查；
-9. CLI `[Y/n]` 人工批准；
-10. Esc 取消当前 Agent Run；
-11. 外部 Cordis Plugin 加载；
-12. 使用官方 `@deepseek-ai/dsh-mcp-client` 接入 Context7；
-13. 基础单元测试与真实 Cordis Context 集成测试。
-
-当前最重要的数据流是：
+当前 mini-dsh 已经完成一个 Agent Harness 的最小闭环：
 
 ```text
 User
-  │
-  ▼
+  ↓
 Agent.send()
-  │
-  ▼
+  ↓
 AgentLoopRuntime
-  │
-  ├── sessions.append(user/message)
-  ├── sessions.deriveMessages()
-  ├── systemPrompt.compose()
-  ├── llm.invoke()
-  │
-  ├── no tool call ───────────────> answer
-  │
-  └── tool calls
-          │
-          ▼
-      tools.execute()
-          │
-          ▼
-      session event log
-          │
-          └──────────────> 下一轮 LLM
+  ├── append session event
+  ├── derive messages
+  ├── compose system prompt
+  ├── invoke LLM
+  └── execute tool calls
+          ↓
+      append tool results
+          ↓
+        next step
 ```
 
-这个结构应该保留。后续所有生产化能力尽量通过新的 Runtime / Policy / Store / Plugin 扩展，而不是把 `AgentLoopRuntime` 改成一个几千行的“上帝类”。
+当前已有：
 
----
+- Cordis `Context / Plugin / Service`；
+- Session Event Log 与 `deriveMessages()`；
+- Tool Registry：`register / schemas / execute`；
+- System Prompt Runtime；
+- LLM Provider Runtime；
+- Agent / Agent Loop Runtime；
+- DeepSeek Streaming Chat Completion；
+- Reasoning / Content / Tool Call 流式解析；
+- Bash / File Tools；
+- Workspace 路径限制和应用层命令策略；
+- CLI `[Y/n]` 人工批准；
+- Esc 取消当前 Run；
+- 外部 Cordis Plugin 加载；
+- 使用官方 `@deepseek-ai/dsh-mcp-client` 接入 Context7；
+- Tool Call / Tool Result 取消一致性修复；
+- Symbolic Link Workspace Escape 防护；
+- 单元测试和真实 Cordis Context 集成测试。
 
-## 1.2 当前明确缺失的能力
+这个最小闭环必须保留。后续能力尽量以新的 Store / Policy / Runtime / Plugin 形式扩展，不把 `AgentLoopRuntime` 堆成上帝类。
 
-当前 README 已经明确说明以下能力尚未实现：
+## 1.2 当前缺口
+
+当前项目仍然属于学习型 Harness，主要缺失：
 
 ```text
-maxSteps
-token / cost budget
-context compaction
-no-progress detector
-stop hooks
-steering queue
-完整权限系统
-完整模型配置中心
-TUI / Web UI
+Session 只存在内存
+重启后无法恢复 Session
+缺少持久 Session Event Log
+缺少 Run 级资源预算
+缺少结构化 Stop Reason
+缺少 Context Compaction
+Tool 参数 / 输出治理较弱
+多 Tool Call 主要顺序执行
+缺少 Tool Timeout 策略
+MCP 生命周期主要由外部插件直接负责
+工具增多后 Schema 会持续占用模型上下文
+缺少结构化 Trace / Metrics
+缺少系统化 Eval / Fault Injection
 ```
-
-此外，从工程角度还有下面这些缺口：
-
-```text
-Session 仅内存保存
-程序重启后无法 Resume
-Run 没有结构化状态与停止原因
-Tool 参数/结果治理较弱
-Tool 调用主要顺序执行
-缺少 Run / Step / Tool Trace
-缺少统一 Metrics
-MCP 生命周期主要依赖外部插件
-工具数量增加后全部 Schema 会进入模型上下文
-缺少系统化 Eval
-缺少故障注入与回归实验
-```
-
-因此现在的项目仍然应该被理解为：
-
-> 一个优秀的 Agent Harness 学习基线，而不是生产 Agent Runtime。
 
 ---
 
 # 2. 与官方 DeepSeek Harness 的关系
 
-## 2.1 官方项目应该作为“能力地图”，不是源码复制目标
+官方 DSH 已经将 Harness 拆成非常完整的能力系列，包括 core、session、compaction、guard、sandbox、skill、subagent、jobs、workflow、mcp、interaction、test-support 等。
 
-当前官方 DeepSeek Harness 已经具有非常完整的模块化能力，包括：
+本项目不追求功能数量与官方对齐，而是选择最有学习价值、最适合 Coding Agent Harness 主线的能力重新实现。
 
-- 持久 Session 数据平面；
-- JSONL Persistence；
-- Session Checkpoint；
-- Session Projection / Cache；
-- Compaction；
-- Tool Result Pruning；
-- Tool Schema / Output Validation；
-- Tool Timeout；
-- Parallel Tool Calls；
-- Repeat Tool Guard；
-- MCP reconnect / namespace / lifecycle；
-- Skills；
-- Subagent；
-- Jobs；
-- Workflow；
-- Interaction / Approval；
-- Linux bwrap / Landlock；
-- macOS Seatbelt；
-- Windows Restricted Token / ACL；
-- OpenTelemetry；
-- Replay / Mock / Testkit；
-- Browser / Computer / SSH / LSP 等大量能力。
+## 2.1 Session：参考官方的“权威日志 + 持久化后端”思路
 
-因此本项目**不追求功能数量与官方对齐**。
+官方 DSH 的 Session 核心仍然是**仅追加会话事件日志**；持久化由独立 `sessionPersistence` seam 提供。
 
-正确策略是：
+官方第一方持久化后端不是 SQLite，而是：
 
 ```text
-官方 DSH
-   │
-   ├── 研究它解决了什么 Runtime 问题
-   ├── 理解为什么需要这个能力
-   ├── 自己重新设计一个适合 mini-dsh 的简化版本
-   └── 通过测试 / Benchmark 验证自己的实现
+Per-session append-only JSONL
+        +
+optional/default Zstandard encoding
 ```
 
-原则：
+官方存储层负责持久日志、flush、格式 generation、尾部崩溃恢复等；Agent 层负责对中断轮次进行语义恢复。
 
-> 可以参考问题、抽象和架构思想，但核心代码、接口设计、测试与实验必须自己实现。
-
----
-
-## 2.2 哪些官方能力值得自己重新实现
-
-高优先级：
+因此 mini-dsh 后续也采用：
 
 ```text
-Session Persistence / Resume
-Context Compaction
-Run Budget
-Tool Validation
-Tool Timeout / Cancellation
-Parallel Tool Calls
-MCP Lifecycle
+Session Event Log = Source of Truth
+
+SessionRuntime
+    ↓
+SessionStore
+    ├── MemorySessionStore
+    └── JsonlSessionStore
+```
+
+第一版不做官方完整的 generation / Zstd / format migration 系统，但保持相同的核心边界：
+
+> 持久化后端保存事件日志；Message、统计信息、上下文等全部从日志派生。
+
+SQLite 不再作为 Session 的主持久化存储。后续如有需要，可把 SQLite 用在：
+
+```text
 Trace / Metrics
+Eval Result
+Session Search Index
+FTS Query
+Derived Projection
 ```
 
-这些能力即使官方已经存在，自己重新实现仍然非常有价值，因为它们属于 Agent Runtime 的核心工程机制。
+即：**JSONL 保存权威历史，SQLite 保存可重建的查询/分析数据。**
 
-低优先级或暂不实现：
+## 2.2 Tool：参考官方“Registry + Guarded Execution Pipeline”
+
+官方 DSH 的 Tool 不只是 `name + execute`，还区分：
+
+- model-facing schema；
+- canonical output；
+- timeout metadata；
+- concurrency safety；
+- pre / execute / post execution pipeline；
+- cancellation signal；
+- tool restrictions / policy。
+
+mini-dsh 不需要完全复制这套复杂度，但 Tool Runtime V2 应至少覆盖：
+
+```text
+Schema Validation
+Execution Metadata
+Timeout / Cancellation
+Normalized Result
+Concurrency Safety
+Trace Hook
+```
+
+## 2.3 Agent Loop：参考官方“Turn / Step + bounded parallel safe calls”
+
+官方 `dsh-agent-loop` 负责创建/恢复 Agent，并以“模型请求 → 工具执行 → 继续步骤”驱动 Turn / Step 生命周期；并行安全 Tool 可以在一个 Step 内有界并行，独占 Tool 作为顺序屏障。
+
+mini-dsh 保留自己的最小 Agent Loop，但补充：
+
+```text
+Run Controller
+Step identity
+Parallel-safe tool scheduler
+Structured stop reason
+```
+
+## 2.4 Context Compaction：参考“压缩旧历史、保留近期对话”
+
+官方 DSH 的 compaction 会在上下文压力增大时把较早历史压缩为摘要，同时保留近期会话；另有 Tool Result Pruner 等辅助机制。
+
+mini-dsh 第一版只实现最核心策略：
+
+```text
+Durable Event Log
+      ↓
+Context Projection
+      ├── Compacted Summary
+      └── Recent Raw Conversation
+      ↓
+LLM Request
+```
+
+原始 Event 不删除，Compaction 只改变模型可见投影。
+
+## 2.5 MCP：参考官方生命周期，但不重写 MCP 协议
+
+官方 DSH MCP Client 已经覆盖 stdio / Streamable HTTP、server-qualified namespace、tool discovery、timeout、reconnect 与生命周期释放。
+
+mini-dsh 当前已经使用官方 MCP Client，因此后续不重写 MCP 协议栈，而是在其上增加 Harness 自己的 `McpManager`：
+
+```text
+registry
+state
+health
+reconnect policy
+lazy activation
+tool catalog integration
+```
+
+这样个人工作重点放在 Harness 治理，而不是重复实现协议细节。
+
+## 2.6 官方已有但本项目不优先复刻
+
+暂不作为主线：
 
 ```text
 Browser Use
 Computer Use
-Web GUI
-ACP
-Remote BFF
 SSH
 LSP
-Windows Sandbox
-完整 Landlock / Seatbelt
+ACP / Remote BFF
+完整 Sandbox 平台后端
 复杂 Workflow Engine
 Webhook
-大型 Settings / Credential Center
+完整 Settings / Credential Center
+Web GUI
 ```
-
-原因不是这些能力不重要，而是它们会显著扩大项目边界，却不能明显增强“理解并实现 Agent Runtime 核心机制”这条主线。
 
 ---
 
-# 3. 开发原则
+# 3. 核心设计原则
 
-## 3.1 原始 Event Log 继续作为 Source of Truth
-
-不要因为增加数据库就放弃当前设计。
+## 3.1 Event Log 是唯一事实源
 
 保持：
 
 ```text
-Session Events
-    │
-    ├── user/message
-    ├── assistant/message
-    ├── assistant/tool_calls
-    ├── tool/result
-    └── ... future events
-
-        ↓ derive / project
-
-LLM Messages / UI State / Metrics
+SessionEvent[]
+   ↓
+derive / project
+   ├── LLM Messages
+   ├── Context View
+   ├── Session Stats
+   ├── Trace Correlation
+   └── Query Index
 ```
 
-数据库保存的是事件，不应该同时维护一套容易不一致的“最终 messages 表”。
+不要再维护一套“最终 messages 表”作为第二事实源。
 
----
-
-## 3.2 Durable History 与 Model Context 必须分离
-
-未来必须明确：
+## 3.2 Durable History 与 Model Context 分离
 
 ```text
-完整 Session 历史
-!=
-每次发送给模型的上下文
+Durable Session History
+        !=
+Model-visible Context
 ```
 
-即：
+完整历史用于：
+
+- Resume；
+- Replay；
+- Debug；
+- Eval；
+- Audit。
+
+模型上下文用于：
+
+- 当前推理；
+- Token 控制；
+- Compaction。
+
+## 3.3 权威数据与派生数据分离
 
 ```text
-Durable Event Log
-       │
-       ▼
-Context Projector / Compactor
-       │
-       ├── Summary
-       └── Recent Raw Events
-       │
-       ▼
-LLM Request
+JSONL Session Log    -> authoritative
+Trace JSON / SQLite  -> derived
+Search Index         -> derived
+Eval Metrics         -> derived
 ```
 
-完整历史负责恢复、审计和评测；上下文投影负责控制 token。
+派生数据损坏后应该可以从 Event Log 重建。
 
----
+## 3.4 Tool Side Effect 与 Concurrency 显式建模
 
-## 3.3 Side Effect 必须显式建模
-
-工具不能只分“能不能执行”。
-
-至少应增加：
+至少增加：
 
 ```text
 readOnly
@@ -307,273 +326,169 @@ concurrencySafe
 sideEffect
 ```
 
-例如：
+默认值采用 fail-closed：未明确声明 `concurrencySafe === true` 的 Tool 不并行。
 
-```text
-read_file
-  readOnly = true
-  idempotent = true
-  concurrencySafe = true
+## 3.5 Cancellation 是协议语义，不只是 UI
 
-write_file
-  readOnly = false
-  idempotent = false / conditional
-  concurrencySafe = false
+必须继续维持当前已经建立的不变式：
 
-bash
-  sideEffect = unknown
-  concurrencySafe = false by default
-```
+> 一旦 Assistant Event 中记录了 Tool Calls，每个 Tool Call 最终都必须有可以关联的 Tool Result / Cancelled Result。
 
-这会影响并发、Crash Recovery、Retry 和权限策略。
+并行 Tool、Timeout、Crash Recovery 都不能破坏这个约束。
 
----
+## 3.6 当前 Sandbox 只描述为应用层 Policy Gate
 
-## 3.4 每个 Runtime 增强都必须可测试
-
-每一个阶段至少包含：
-
-```text
-Design
-Implementation
-Unit Test
-Integration Test
-Failure Case
-```
-
-涉及性能/效率的能力还必须包含：
-
-```text
-Baseline
-Experiment
-Metrics
-Comparison
-```
-
-如果不能测量，就不要在简历中写“显著优化”“提升效率”等结论。
-
----
-
-## 3.5 不把当前 Sandbox 描述为安全隔离
-
-当前 mini-dsh 的 workspace/path/command gate 是**应用层策略**，不是内核级安全边界。
-
-必须继续保持这种描述：
-
-> application-level policy gate
-
-真正的安全边界目前仍然主要依靠 Human Approval。
-
-除非未来真的接入 Docker / bubblewrap / Landlock / Seatbelt 等隔离机制，否则 README 和简历都不要使用“安全沙箱”“强隔离执行”等措辞。
+除非后续真正接入 bubblewrap / Landlock / Seatbelt / Container 等隔离，否则 README 和简历不要使用“安全沙箱”“强隔离执行”等表述。
 
 ---
 
 # 4. 目标架构
 
-完成主要路线后，希望形成下面的结构：
-
 ```text
-                              User
-                               │
-                               ▼
-                           AgentRuntime
-                               │
-         ┌─────────────────────┼─────────────────────┐
-         │                     │                     │
-         ▼                     ▼                     ▼
-   RunController         ContextManager          SessionRuntime
-         │                     │                     │
-   step/token/cost        token meter            Event Log
-   time/tool budget       compaction              │
-   progress state         projection               ▼
-         │                     │                SessionStore
-         │                     │              ┌──────┴──────┐
-         │                     │              ▼             ▼
-         │                     │          MemoryStore   SQLiteStore
-         │                     │
-         └──────────────┬──────┘
-                        ▼
-                  AgentLoopRuntime
-                        │
-                        ▼
-                    ToolRouter
-                        │
-              ┌─────────┴──────────┐
-              ▼                    ▼
-         ToolRuntime            McpRuntime
-              │                    │
-      validation/policy        connection
-      timeout/cancel           discovery
-      parallel groups          reconnect
-              │                    │
-              └─────────┬──────────┘
-                        ▼
-                   TraceRuntime
-                        │
-                        ▼
-                     EvalRunner
+                               User
+                                │
+                                ▼
+                         Agent / Harness API
+                                │
+                                ▼
+                         AgentLoopRuntime
+                                │
+             ┌──────────────────┼───────────────────┐
+             ▼                  ▼                   ▼
+       RunController      ContextManager       SessionRuntime
+             │                  │                   │
+      step / token /       token pressure       Event Log
+      cost / duration      compaction                │
+             │                  │                    ▼
+             │                  │                SessionStore
+             │                  │              ┌──────┴──────┐
+             │                  │              ▼             ▼
+             │                  │          MemoryStore   JsonlStore
+             │                  │
+             └───────────┬──────┘
+                         ▼
+                     ToolRouter
+                         │
+               ┌─────────┴─────────┐
+               ▼                   ▼
+           ToolRuntime          McpManager
+               │                   │
+       schema / timeout        lifecycle
+       cancel / scheduler      discovery
+       normalized result       lazy activation
+               │                   │
+               └─────────┬─────────┘
+                         ▼
+                    TraceRuntime
+                         │
+                         ▼
+                      EvalRunner
 ```
 
 ---
 
-# 5. 推荐新增目录结构
+# 5. 推荐目录
 
-不要求一次性创建。随着阶段推进逐步增加。
+随着阶段推进逐步增加，不要求一次创建完。
 
 ```text
 src/
 ├── core/
 │   ├── agent-loop-runtime.js
 │   ├── agent-runtime.js
-│   ├── context-runtime.js             # 新
+│   ├── context-runtime.js
 │   ├── llm-runtime.js
-│   ├── run-controller-runtime.js      # 新
+│   ├── run-controller-runtime.js
 │   ├── session-runtime.js
 │   ├── tool-runtime.js
-│   ├── trace-runtime.js               # 新
-│   └── ...
+│   └── trace-runtime.js
 │
 ├── session/
-│   ├── session-store.js               # 新
-│   ├── memory-session-store.js        # 新
-│   └── sqlite-session-store.js        # 新
+│   ├── session-store.js
+│   ├── memory-session-store.js
+│   ├── jsonl-session-store.js
+│   └── recovery.js
 │
 ├── context/
-│   ├── token-meter.js                 # 新
-│   ├── context-projector.js           # 新
-│   └── compactor.js                   # 新
+│   ├── token-meter.js
+│   ├── context-projector.js
+│   └── compactor.js
 │
 ├── tools/
 │   ├── bash.js
 │   ├── files.js
-│   ├── tool-schema.js                 # 新
-│   └── tool-router.js                 # 后期新增
+│   ├── tool-schema.js
+│   └── tool-router.js
 │
 ├── mcp/
-│   └── mcp-runtime.js                 # 后期新增
+│   └── mcp-manager.js
 │
 ├── eval/
-│   ├── eval-runner.js                 # 后期新增
+│   ├── eval-runner.js
 │   ├── scorer.js
-│   └── metrics.js
+│   ├── metrics.js
+│   └── fault-injector.js
 │
 └── plugins/
     ├── sessions.js
-    ├── run-controller.js              # 新
-    ├── trace.js                       # 新
-    ├── context.js                     # 新
+    ├── run-controller.js
+    ├── context.js
+    ├── trace.js
     └── ...
 
 evals/
-├── fixtures/
 ├── filesystem/
-├── tool-routing/
 ├── long-horizon/
+├── tool-routing/
 ├── tool-failure/
 ├── mcp-failure/
 └── context-pressure/
 
-docs/
-└── design/
-    ├── session-persistence.md
-    ├── run-controller.md
-    ├── tool-runtime-v2.md
-    ├── compaction.md
-    ├── progressive-tools.md
-    └── evaluation.md
+docs/design/
+├── session-persistence.md
+├── run-controller.md
+├── tool-runtime-v2.md
+├── compaction.md
+├── progressive-tools.md
+└── evaluation.md
 ```
-
-目录仅表示模块边界，具体文件可以根据实现保持精简。
 
 ---
 
-# 6. Phase 0：建立个人开发基线
+# 6. Phase 0：固定 Baseline 与个人贡献边界
 
-## 目标
+目标：所有后续优化都有可比较的起点。
 
-在修改 Runtime 前，先明确项目当前行为和自己的贡献边界。
+要做：
 
-## 要做的事情
+- 保证 `pnpm test`、`pnpm check` 全部通过；
+- 固定普通问答、单 Tool、多 Tool、取消、Tool Error、MCP 不可达等行为；
+- 新增 `UPSTREAM.md`；
+- 记录原始 mini-dsh snapshot / commit；
+- 后续个人代码使用独立 commit 逐步演进。
 
-### 6.1 保存基线测试
+Definition of Done：
 
-要求当前：
-
-```bash
-pnpm test
-pnpm check
-```
-
-必须全部通过。
-
-新增一组 Baseline Integration Test，固定以下行为：
-
-```text
-普通问答
-1 次 Tool Call
-连续多次 Tool Call
-一次返回多个 Tool Call
-取消执行
-工具失败
-MCP 不可达但 CLI 可启动
-```
-
-后续每个 Phase 都必须保证这些旧行为没有被破坏。
-
-### 6.2 明确 upstream 与个人扩展
-
-新增或后续补充：
-
-```text
-UPSTREAM.md
-CHANGELOG.md
-```
-
-`UPSTREAM.md` 应说明：
-
-- 原始项目来源；
-- MIT License；
-- 哪个 commit / snapshot 作为开发起点；
-- 后续哪些模块属于自己的实现。
-
-## 完成标准
-
-- 当前测试全部绿色；
-- 有一个固定 baseline；
-- 后续任何性能对比都可以回到 baseline；
-- Git 历史能够区分“同步上游”和“个人开发”。
+- 上游代码与个人贡献边界清晰；
+- Baseline Integration Tests 稳定；
+- 后续任何 benchmark 都可以回到基线。
 
 ---
 
-# 7. Phase 1：Trace / Metrics 基础设施
+# 7. Phase 1：Trace / Metrics
 
-> 建议先做 Trace，再做优化。否则后续很多改动无法量化。
+目标：先让 Harness 的执行过程可观测，再开始优化。
 
-## 当前问题
-
-现在运行过程主要依靠 CLI callback 输出：
-
-```text
-onReasoning
-onContent
-onToolCall
-onToolResult
-```
-
-但缺少结构化 Run 级数据。
-
-## 目标
-
-为一次 Agent 执行建立统一身份：
+建议身份层级：
 
 ```text
 sessionId
-   └── runId
-        └── stepId
-             └── toolCallId
+  └── runId
+       └── stepId
+            └── toolCallId
 ```
 
-## 建议数据结构
+第一版 Trace：
 
 ```js
 RunTrace {
@@ -582,149 +497,108 @@ RunTrace {
   startedAt,
   endedAt,
   stopReason,
-  usage: {
-    inputTokens,
-    outputTokens,
-    reasoningTokens,
-    estimatedCost
-  },
-  steps: [],
-  toolCalls: []
+  usage,
+  steps,
+  toolCalls
 }
 ```
 
-Tool Trace 至少记录：
+记录至少包括：
 
-```text
-tool name
-arguments hash
-start/end time
-latency
-success/failure
-cancelled/timeout
-```
+- provider / model；
+- input / output / reasoning token（provider 可提供时）；
+- LLM latency / TTFT（可得时）；
+- Tool latency；
+- Tool success / error / timeout / cancelled；
+- Step 数；
+- Stop Reason。
 
-LLM Trace 至少记录：
+第一版输出到 `.trace/<run-id>.json` 即可。
 
-```text
-provider/model
-TTFT（如果可得）
-latency
-input/output token
-finish reason
-```
-
-## 实现原则
-
-Trace 不能成为 AgentLoop 的业务逻辑。
-
-推荐：
-
-```text
-AgentLoop
-  │ emits events
-  ▼
-TraceRuntime
-```
-
-第一版可以只输出：
-
-```text
-.trace/<run-id>.json
-```
-
-暂时不需要 OpenTelemetry。
-
-## 验收标准
-
-- 每个 Agent Run 都生成唯一 `runId`；
-- 可以从 Trace 重建一次执行的 Step 和 Tool Call 顺序；
-- Cancellation / Tool Error 都能在 Trace 中体现；
-- 不改变 Session Event Log 的语义；
-- Trace 写入失败不能把正常 Agent Run 打挂。
+要求 Trace 写失败不影响正常 Agent Run。
 
 ---
 
 # 8. Phase 2：Session Persistence + Resume
 
-这是第一块真正从“学习 Demo”迈向 Runtime 的关键能力。
+这是最重要的生产能力之一。
 
-## 当前问题
-
-当前 `SessionRuntime` 使用内存 `Map`。
+## 8.1 当前问题
 
 ```text
+SessionRuntime -> in-memory Map
+
 process exit
     ↓
 all sessions lost
 ```
 
-## 目标
-
-把 Session 存储抽象成：
+## 8.2 目标
 
 ```text
 SessionRuntime
-     │
-     ▼
+    ↓
 SessionStore
-     │
- ┌───┴─────────┐
- ▼             ▼
-Memory       SQLite
+    ├── MemorySessionStore
+    └── JsonlSessionStore
 ```
 
-## 建议接口
+建议接口：
 
 ```js
 class SessionStore {
-  create(session)
-  get(sessionId)
+  create(header)
+  open(sessionId)
+  append(sessionId, events)
+  flush(sessionId)
   list()
-  append(sessionId, event)
-  clear(sessionId)
+  close(sessionId)
 }
 ```
 
-`SessionRuntime` 仍然负责：
+`SessionRuntime` 负责 Session / Event 语义；`SessionStore` 只负责持久日志。
+
+## 8.3 JSONL Layout
+
+第一版可以简单：
 
 ```text
-Session 语义
-Event 类型
-deriveMessages()
+.data/sessions/
+  <session-id>/
+    session.jsonl
 ```
 
-`SessionStore` 只负责持久化。
+每行一个持久事件：
 
-不要让数据库后端理解 LLM Message。
-
-## SQLite 建议表
-
-第一版保持简单：
-
-```sql
-sessions(
-  id,
-  created_at,
-  updated_at,
-  metadata_json
-)
-
-events(
-  session_id,
-  seq,
-  type,
-  data_json,
-  created_at,
-  PRIMARY KEY(session_id, seq)
-)
+```json
+{"seq":1,"type":"user/message","data":{...},"createdAt":"..."}
+{"seq":2,"type":"assistant/message","data":{...},"createdAt":"..."}
 ```
 
-不要过度范式化每一种 Event。
+第一版关键不是压缩，而是：
 
-## Resume
+- append-only；
+- seq 单调；
+- restart 后可完整读取；
+- 写入失败不破坏已提交前缀；
+- 尾部半行可检测并恢复/截断；
+- `flush()` 形成明确持久化屏障。
 
-CLI 增加类似：
+后续可选：
+
+```text
+zstd compression
+format version
+immutable generation
+migration
+checksum
+```
+
+这些属于参考官方 DSH 后继续加深的方向，不阻塞第一版。
+
+## 8.4 Resume
+
+CLI：
 
 ```text
 /sessions
@@ -732,92 +606,61 @@ CLI 增加类似：
 /new
 ```
 
-恢复流程：
+流程：
 
 ```text
-SQLite
-  ↓
-load events
-  ↓
+JsonlSessionStore
+      ↓ read committed events
 SessionRuntime
-  ↓
+      ↓
 deriveMessages()
-  ↓
+      ↓
 Agent continues
 ```
 
-## Crash Recovery 第一版
+## 8.5 Crash Recovery
 
-至少检测 Event Log 中不完整的 Tool Call。
-
-必须区分：
+把“物理日志恢复”和“Agent 语义恢复”分开：
 
 ```text
-read-only / idempotent tool
-side-effect tool
+Storage Recovery
+  - truncated final line
+  - invalid tail
+  - committed prefix
+
+Agent Recovery
+  - interrupted turn
+  - unmatched tool call
+  - side-effect uncertainty
 ```
 
-不要在重启后无脑重新执行 side-effect tool。
-
-推荐第一版行为：
+第一版规则：
 
 ```text
-发现未完成 tool call
-
 readOnly && idempotent
-    -> 可由策略决定 retry
+    -> 允许明确策略决定是否 retry
 
-otherwise
-    -> 标记 interrupted / unknown
-    -> 不自动重试
+side-effect / unknown
+    -> 不自动 retry
+    -> 记录 interrupted / unknown outcome
 ```
 
-## 验收标准
+Definition of Done：
 
-测试：
-
-```text
-create -> restart -> load
-conversation -> restart -> continue
-clear -> restart -> remains clear
-multi-session isolation
-invalid/corrupt event handling
-interrupted tool call detection
-```
-
-成功标准：
-
-> kill 进程后重新启动，可以使用同一个 sessionId 继续对话，而且 Event Log 顺序和 tool_call/tool_result 协议仍然一致。
+- create -> restart -> resume；
+- conversation -> restart -> continue；
+- multi-session isolation；
+- malformed/torn tail 恢复；
+- 中断 Tool Call 不产生盲目副作用重试；
+- Event Log 与 Tool Call / Tool Result 协议仍然一致。
 
 ---
 
 # 9. Phase 3：Run Controller / Execution Budget
 
-## 当前问题
+当前 `while (true)` 只依赖模型停止 Tool Calling。
 
-当前 Agent Loop 的核心是：
-
-```js
-while (true) {
-  ...
-}
-```
-
-模型只要持续调用 Tool，Runtime 就会持续运行。
-
-## 目标
-
-引入独立：
-
-```text
-RunController
-```
-
-统一治理一次 Agent Run 的资源预算。
-
-## Run Policy
-
-第一版建议：
+增加：
 
 ```js
 RunPolicy {
@@ -830,23 +673,7 @@ RunPolicy {
 }
 ```
 
-不要把所有配置直接散落在 AgentLoop 中。
-
-## Run State
-
-```js
-RunState {
-  stepCount,
-  toolCallCount,
-  startedAt,
-  usage,
-  failures
-}
-```
-
-## Stop Reason
-
-必须统一定义：
+统一 Stop Reason：
 
 ```text
 completed
@@ -862,96 +689,38 @@ context_overflow
 internal_error
 ```
 
-## AgentLoop 改造
-
-从：
+职责边界：
 
 ```text
-while true
+RunController -> 能否继续执行
+AgentLoop     -> 下一步怎么执行
 ```
 
-变为：
+AgentLoop 结构变为：
 
 ```text
-beforeRun
-
-while controller.canContinue(runState)
-    beforeStep
-    model
-    tools
-    afterStep
-
-finish(stopReason)
+begin run
+  ↓
+before step
+  ↓
+model request
+  ↓
+tool dispatch
+  ↓
+after step
+  ↓
+policy check
 ```
 
-注意：
-
-> RunController 决定“是否允许继续”，AgentLoop 决定“下一步如何执行”。
-
-两个职责不要混在一起。
-
-## 返回值
-
-未来可以让内部 Runtime 返回：
-
-```js
-RunResult {
-  status,
-  answer,
-  stopReason,
-  usage,
-  runId
-}
-```
-
-CLI 再决定如何展示。
-
-## 验收标准
-
-分别构造无限 Tool Agent，验证：
-
-```text
-step limit 生效
-tool call limit 生效
-time limit 生效
-cancel 优先级正确
-正常完成不会误判 limit
-stop reason 与 Trace 一致
-```
+Definition of Done：分别构造无限调用、超时、Token 超限等测试，并验证 Trace 中 Stop Reason 与真实停止原因一致。
 
 ---
 
 # 10. Phase 4：Tool Runtime V2
 
-这是后续 Parallel、Crash Recovery、Tool Routing、MCP 的基础。
+目标：从简单 Registry 发展为最小但完整的 Tool Execution Pipeline。
 
-## 当前问题
-
-当前 ToolRuntime 主要解决：
-
-```text
-register
-schemas
-execute
-```
-
-但工具执行缺少统一治理。
-
-## 目标结构
-
-```text
-ToolRuntime
-    │
-    ├── Registry
-    ├── Schema Validation
-    ├── Metadata
-    ├── Execution Pipeline
-    ├── Timeout
-    ├── Cancellation
-    └── Normalized Result
-```
-
-## ToolDefinition 建议升级
+建议 ToolDefinition：
 
 ```js
 {
@@ -959,7 +728,6 @@ ToolRuntime
   description,
   parameters,
   execute,
-
   timeoutMs,
   readOnly,
   idempotent,
@@ -968,59 +736,29 @@ ToolRuntime
 }
 ```
 
-第一版 Metadata 不需要完美，只需要有清晰默认值：
+执行路径：
 
 ```text
-未声明 concurrencySafe -> false
-未声明 readOnly -> false
-未声明 idempotent -> false
+model tool call
+    ↓
+parse / validate args
+    ↓
+policy / metadata
+    ↓
+timeout + cancellation signal
+    ↓
+execute
+    ↓
+normalize result
+    ↓
+append tool/result
+    ↓
+trace
 ```
 
-默认 fail closed。
+建议 JSON Schema + AJV 做参数验证。
 
-## Schema Validation
-
-工具参数必须在 Runtime 层统一验证。
-
-可以选：
-
-```text
-JSON Schema + AJV
-```
-
-要求：
-
-```text
-invalid model arguments
-     ↓
-normalized tool error
-     ↓
-记录 tool/result
-     ↓
-返回模型
-```
-
-不能因为模型产生错误 JSON 参数就破坏 Event Log。
-
-## Timeout
-
-```text
-ToolDefinition.timeoutMs
-        ↓
-AbortController / AbortSignal
-        ↓
-Tool execution
-```
-
-必须明确：
-
-> JS 同进程 Tool 的 timeout 通常是 cooperative cancellation，并不代表能够强杀任意同步代码。
-
-README 要保持准确描述。
-
-## Normalized Result
-
-统一：
+Normalized Result：
 
 ```js
 {
@@ -1032,293 +770,124 @@ README 要保持准确描述。
 }
 ```
 
-避免每个 Tool 自己发明错误格式。
-
-## 验收标准
-
-覆盖：
+必须覆盖：
 
 ```text
 invalid args
+unknown tool
 throw error
 timeout
 cancel
-normal value
+normal success
 large result
-unknown tool
 ```
 
-并确认每一种情况最终都产生合法 Tool Result。
+注意：JS 同进程 Timeout 本质上通常是 cooperative cancellation，不宣称可以强杀任意同步代码。
 
 ---
 
 # 11. Phase 5：Parallel Tool Calls
 
-## 当前问题
+参考官方 DSH 的原则：只有明确标记为并发安全的调用才允许重叠执行，独占调用保持顺序。
 
-当模型一次产生多个 Tool Call 时，当前 Runtime 主要顺序执行。
-
-## 目标
-
-让安全的 Tool 并行执行：
+第一版规则：
 
 ```text
-LLM
- ↓
-read_file A
-read_file B
-grep C
- ↓
-parallel group
+concurrencySafe === true -> bounded parallel pool
+otherwise                -> exclusive barrier
 ```
 
-而副作用 Tool 默认串行：
-
-```text
-write_file
-bash
-git commit
-```
-
-## 调度规则
-
-推荐第一版：
-
-```text
-concurrencySafe === true
-    -> 可以进入 parallel group
-
-otherwise
-    -> exclusive
-```
-
-再增加：
+增加：
 
 ```text
 maxParallelToolCalls
 ```
 
-作为全局并发上限。
+关键不变式：
 
-## 关键难点
+- 模型 Tool Call 顺序可以不同于执行完成顺序；
+- 结果必须通过 `tool_call_id` 正确关联；
+- Cancellation 后每个已记录 Tool Call 都必须有 Result / Cancelled Result；
+- Exclusive Tool 不能与其前后的并行组越过屏障执行。
 
-必须保证：
-
-```text
-模型发出的 tool_call 顺序
-!=
-执行完成顺序
-```
-
-但最终 Event Log / Tool Result 必须能够按照 `tool_call_id` 正确关联。
-
-Cancellation 时也必须继续保持：
-
-> 每一个已经写入 assistant tool_calls 的 call 都有对应 result/cancelled result。
-
-这是现有项目已经解决过一次的重要协议不变式，不允许因为并行执行重新引入。
-
-## Benchmark
-
-准备多个独立 `read_file / grep` Tool Call：
-
-```text
-serial latency
-vs
-parallel latency
-```
-
-只允许写真实测量结果。
+Benchmark：用多个独立 read / grep 调用比较 serial vs bounded parallel latency。
 
 ---
 
 # 12. Phase 6：Context Manager + Compaction
 
-## 当前问题
-
-现在每一步通过完整 Event Log：
+目标：把持久 Session History 与模型请求 Context 正式分离。
 
 ```text
-deriveMessages()
-```
-
-长期运行后模型上下文会持续增长。
-
-## 目标
-
-新增：
-
-```text
+Full Durable Event Log
+       ↓
 ContextManager
+       ├── Token Meter
+       ├── Compaction Policy
+       ├── Older History Summary
+       └── Recent Raw Conversation
+       ↓
+LLM Request
 ```
 
-让：
+Trigger 采用 Token Pressure，而不是固定轮数。
 
-```text
-Session History
-```
-
-和：
-
-```text
-Model Context
-```
-
-正式解耦。
-
-## 第一版策略
-
-采用最容易解释的：
-
-```text
-Summary + Recent Window
-```
-
-例如：
-
-```text
-Event 1 ~ 70
-      ↓
- summary
-
-Event 71 ~ 100
-      ↓
- raw events
-```
-
-发送：
-
-```text
-System Prompt
-Summary
-Recent Raw Messages
-```
-
-## Token Meter
-
-需要独立：
-
-```text
-TokenMeter
-```
-
-至少允许：
-
-```text
-estimate messages token
-estimate tool schema token
-record actual provider usage when available
-```
-
-## Compaction Trigger
-
-```text
-contextTokens >= threshold
-```
-
-而不是按固定“第 20 轮”压缩。
-
-## Compaction Event
-
-推荐把压缩记录进 Event Log，例如：
+推荐在 Session Event Log 中追加 Compaction 事实，例如：
 
 ```text
 context/compaction
 ```
 
-保存：
+记录：
 
 ```text
-shadowed event range
+shadowed range
 summary
+strategy/model
 createdAt
-model / strategy
 ```
 
-但原始 Event 不删除。
+原始历史仍保留。
 
-## 必须保证
+必须避免把一个 Tool Call / Result 协议单元从中间切断。
 
-不能从中间切断：
+Benchmark：50~100 Step 长任务，比较：
 
-```text
-assistant/tool_calls
-        +
-tool/result
-```
-
-它们必须作为逻辑完整单元处理。
-
-## 验收标准
-
-创建 50~100 Step 长任务：
-
-比较：
-
-```text
-baseline context tokens
-compaction context tokens
-任务成功率
-summary 次数
-总 LLM token
-```
+- context tokens；
+- total input tokens；
+- compaction count；
+- task success；
+- latency。
 
 ---
 
-# 13. Phase 7：Managed MCP Runtime
+# 13. Phase 7：Managed MCP Lifecycle
 
-## 当前现状
+当前官方 `@deepseek-ai/dsh-mcp-client` 已负责 MCP 协议连接和 Tool 注册，本阶段不重写协议。
 
-现在 mini-dsh 通过官方 `@deepseek-ai/dsh-mcp-client` 加载 Context7，已经验证了：
-
-```text
-MCP tool
-   ↓
-ctx.tools.register()
-   ↓
-AgentLoop 无需理解 MCP
-```
-
-这个设计应该保留。
-
-## 后续目标
-
-不要重写 MCP 协议本身。
-
-在现有客户端之上增加自己的：
+新增 Harness 层：
 
 ```text
-McpRuntime / McpManager
+McpManager
+  ├── server registry
+  ├── lifecycle state
+  ├── health
+  ├── reconnect policy
+  ├── namespace view
+  └── tool catalog integration
 ```
 
-负责 Runtime 生命周期治理：
-
-```text
-server registry
-connection state
-health
-reconnect
-backoff
-tool generation
-namespace
-reload
-```
-
-## 状态机
+状态示例：
 
 ```text
 DISCONNECTED
-    ↓
 CONNECTING
-    ↓
 READY
-    ↓
-DEGRADED / FAILED
-    ↓
 RECONNECTING
+FAILED
 ```
 
-## 第一版功能
+CLI 可增加：
 
 ```text
 /mcp list
@@ -1327,226 +896,97 @@ RECONNECTING
 /mcp reload <name>
 ```
 
-## Reconnect
-
-建议：
-
-```text
-exponential backoff
-max attempts
-jitter optional
-```
-
-## 验收标准
-
-故障测试：
-
-```text
-server unavailable at startup
-server disconnect during run
-server restart
-reconnect success
-reconnect exhausted
-namespace collision
-```
-
-MCP 故障不能污染本地 Tool Runtime。
+故障测试：startup unavailable、mid-run disconnect、restart、reconnect exhausted、namespace collision。
 
 ---
 
-# 14. Phase 8：Progressive Tool Disclosure【个人重点方向】
+# 14. Phase 8：Progressive Tool Disclosure【个人重点】
 
-这是项目最值得形成个人特色的模块之一。
+问题：随着 MCP Server / Tool 数量增长，如果所有 Tool Schema 每轮都发送给模型，会增加上下文开销并引入无关候选。
 
-## 问题
-
-如果未来接入大量 MCP Server：
-
-```text
-GitHub
-Filesystem
-Database
-Kubernetes
-Slack
-Jira
-Browser
-...
-```
-
-可能出现：
-
-```text
-100~300 tools
-```
-
-传统做法把所有 Tool Schema 每轮发送给模型：
-
-```text
-Prompt
-+
-All Tool Schemas
-```
-
-导致：
-
-- tool schema token 增长；
-- 无关工具干扰 Tool Selection；
-- MCP 数量越多，模型请求越重；
-- 新增工具会影响所有任务。
-
-## 目标
-
-引入：
+目标：
 
 ```text
 Tool Catalog
-     │
-     ▼
+    ↓
 Tool Router
-     │
-     ▼
+    ↓
 Top-K Candidate Tools
-     │
-     ▼
-LLM Request
+    ↓
+Visible Tool Schemas
+    ↓
+LLM
 ```
 
-## Tool Catalog
-
-Catalog 保存完整工具元数据，但不代表全部暴露给模型。
+Tool Catalog：
 
 ```js
-ToolCatalogItem {
+{
   name,
   description,
-  tags,
   source,
+  tags,
   schemaSummary,
   fullDefinition
 }
 ```
 
-## Tool Router V1
+V1 先使用 lexical / BM25 类检索，不急于引入 embedding。
 
-不要一开始就引入 embedding。
-
-先实现：
+进一步增加：
 
 ```text
-keyword / BM25 / simple lexical retrieval
+tool_search(query)
 ```
 
-输入：
+让模型初始只看到 Core Tools；需要额外能力时再搜索并激活。
+
+Tool Activation 可以按 Session 维护：
 
 ```text
-user request
-recent context
+base tools + activated tools
 ```
 
-输出：
+后续与 MCP Manager 联动实现 Lazy MCP：先保留 server metadata，需要时才连接、discover、activate。
+
+核心实验：
 
 ```text
-Top-K tools
-```
-
-之后再增加 dense retrieval，做实验对比。
-
-## `tool_search`
-
-更进一步，让模型初始只看到少数 Core Tool：
-
-```text
-read_file
-bash
-grep
-tool_search
-```
-
-当需要新能力：
-
-```text
-tool_search("create github issue")
-     ↓
-GitHub candidate tools
-     ↓
-activate in session
-```
-
-## Tool Activation Scope
-
-第一版按 Session 维护：
-
-```text
-base tools
-+
-activated tools
-```
-
-后续允许 LRU / TTL。
-
-## Lazy MCP
-
-与 McpRuntime 结合：
-
-```text
-MCP Registry
-   │
-server metadata only
-   │
-Tool Router identifies server
-   │
-connect / discover
-   │
-activate selected tools
-```
-
-这可以避免 Agent 启动时连接所有 MCP Server。
-
-## 最重要的 Benchmark
-
-创建不同 Tool Scale：
-
-```text
-10
-50
-100
-200
+All Schemas
+vs
+Top-K Routing
+vs
+Tool Search
 ```
 
 比较：
 
-```text
-All Tools
-Top-K Router
-Tool Search
-```
-
-指标：
-
-```text
-success rate
-tool schema tokens
-total tokens
-first correct tool rate
-tool selection latency
-end-to-end latency
-```
-
-这个模块应该成为最终简历和答辩的重点之一。
+- tool schema tokens；
+- total input tokens；
+- tool selection accuracy；
+- task success；
+- latency。
 
 ---
 
-# 15. Phase 9：Semantic Progress Detection【个人重点方向】
+# 15. Phase 9：Semantic Progress Detection【个人重点】
 
-## 当前问题
+官方已有 repeat-tool-reminder，主要针对连续完全相同的 Tool Call。
 
-简单的 Repeat Detector 只能识别：
+本项目继续研究更高层“是否真的取得进展”。
+
+Progress Signal 可以组合：
 
 ```text
-完全相同 Tool + 完全相同 Args
+tool name / normalized args
+result class / result hash
+workspace diff
+new information
+failed outcome class
+goal state delta
 ```
 
-但真实 Agent 可能这样卡住：
+例如：
 
 ```text
 grep("Agent") -> no match
@@ -1554,643 +994,252 @@ grep("agent") -> no match
 grep("AgentRuntime") -> no match
 ```
 
-调用不同，但任务没有推进。
+参数不同，但语义上可能仍然没有进展。
 
-## 目标
-
-定义：
+策略：
 
 ```text
-ProgressDetector
+soft threshold -> inject strategy reminder
+hard threshold -> stopReason = no_progress
 ```
 
-分析最近 N Step 是否产生真正的新状态。
-
-## V1：Action / Result Signature
-
-```text
-signature =
-  toolName
-  + normalizedArgs
-  + resultClass
-  + resultHash
-```
-
-识别相近重复。
-
-## V2：Workspace Delta
-
-针对 Coding Agent：
-
-```text
-files changed
-new file
-command exit state
-new test result
-new discovered symbol
-```
-
-用于判断任务是否发生客观状态变化。
-
-## V3：Intervention
-
-不是第一次检测到就终止。
-
-推荐：
-
-```text
-Level 1
-soft reminder
-
-Level 2
-force reflection / strategy change
-
-Level 3
-stopReason = no_progress
-```
-
-## 验收标准
-
-准备固定 Loop Cases：
-
-```text
-identical repeat
-semantically equivalent repeat
-legitimate repeated polling
-progress after failure
-```
-
-必须避免把正常 retry 全部误杀。
-
-重点记录：
-
-```text
-precision / false positive cases
-saved steps
-saved tokens
-success rate impact
-```
+必须通过 Eval 证明误判率和收益，不能只凭规则主观判断。
 
 ---
 
-# 16. Phase 10：Agent Evaluation Framework【个人重点方向】
+# 16. Phase 10：Agent Evaluation【个人重点】
 
-这个阶段负责把前面所有“优化”变成可证明的工程结果。
-
-## 目标结构
-
-```text
-EvalCase
-   ↓
-EvalRunner
-   ↓
-Agent Runtime
-   ↓
-Trace
-   ↓
-Scorer
-   ↓
-EvalReport
-```
-
-## EvalCase
-
-建议 YAML / JSON：
+建立统一 Eval Case：
 
 ```yaml
-name: find-database-config
-prompt: |
-  Find where the database connection is configured.
-
-workspace: ./fixtures/project-a
-
+name: locate-config
+prompt: Find where database connection is configured.
 limits:
-  maxSteps: 20
-  maxTokens: 20000
-
-expect:
+  steps: 20
+  inputTokens: 20000
+expected:
   files:
-    - src/config/database.js
+    - src/config/database.ts
 ```
 
-## Eval 类型
-
-至少准备：
-
-```text
-filesystem-basic
-multi-tool
-coding-edit
-long-horizon
-tool-failure
-mcp-failure
-context-pressure
-tool-routing
-no-progress
-crash-recovery
-```
-
-## Metrics
-
-统一：
+Eval Runner 统一收集：
 
 ```text
 success
 steps
-tool calls
-failed tool calls
-repeated calls
-input tokens
-output tokens
-tool schema tokens
-cost
+tool_calls
+input_tokens
+output_tokens
+tool_schema_tokens
 latency
-stop reason
+cost
+repeated_calls
+stop_reason
 ```
 
-## Baseline Matrix
-
-最终至少做：
+至少建立：
 
 ```text
-Baseline mini-dsh
-
-+ Run Controller
-+ Parallel Tools
-+ Compaction
-+ Tool Router
-+ Progress Detector
+filesystem/
+long-horizon/
+tool-routing/
+context-pressure/
+tool-failure/
+mcp-failure/
 ```
 
-严禁在 README 中提前填写漂亮数字。
-
-只有真实 Benchmark 结果才能写：
-
-```text
-减少 xx% token
-降低 xx% step
-提高 xx% success rate
-```
-
-## 报告
-
-可以输出：
-
-```text
-reports/eval-YYYYMMDD.json
-reports/eval-YYYYMMDD.md
-```
-
-后期可再生成图表。
+所有“优化”结论必须来自 Baseline 对照。
 
 ---
 
-# 17. Phase 11：Fault Injection / Reliability Testing
+# 17. Phase 11：Fault Injection
 
-与 Eval Framework 配套，而不是独立做一个大系统。
-
-## LLM 故障
-
-模拟：
+注入：
 
 ```text
-429
-500
-timeout
-connection reset
-invalid SSE
-invalid tool arguments
-partial tool call stream
-```
-
-## Tool 故障
-
-```text
-throw
-timeout
-cancel
-invalid result
-large result
-partial side effect
-```
-
-## MCP 故障
-
-```text
-disconnect
-restart
-tool list changed
-server unavailable
-slow response
-```
-
-## Runtime 故障
-
-```text
-cancel during multi-tool
-process crash
-restart
-corrupt persistence entry
+LLM 429 / 500 / timeout
+invalid tool call
+Tool exception / timeout
+MCP disconnect / restart
+cancel during multi-tool step
+process crash after committed event
 context overflow
 ```
 
-## 核心检查
+验证：
 
 ```text
-Event Log 是否仍合法？
-每个 tool_call 是否都有结果？
-是否重复产生副作用？
-是否可以 resume？
-StopReason 是否准确？
-Trace 是否完整？
+Session Log 是否保持可恢复
+Tool Call / Result 是否保持协议一致
+是否重复执行副作用
+Run Stop Reason 是否正确
+Resume 后是否继续
+Trace 是否能够解释失败路径
 ```
-
-这部分会形成项目非常好的可靠性故事。
 
 ---
 
-# 18. Optional Phase：Subagent
+# 18. 暂不作为主线的功能
 
-只在单 Agent Runtime 基础稳定后做。
-
-不要把它做成“多 Agent 聊天”。
-
-真正值得研究的是：
+为了避免项目失控，以下功能只在核心 Harness 完成后再考虑：
 
 ```text
-Parent Agent
-    │
-    ├── context isolation
-    ├── tool restriction
-    ├── budget inheritance
-    ├── cancellation propagation
-    └── result aggregation
-```
-
-示例：
-
-```text
-Parent Run Budget = 100K tokens
-
-Child A <= 20K
-Child B <= 20K
-```
-
-这会把前面已经实现的 RunController / ToolRuntime / Session 复用起来。
-
-如果这些底层能力尚未稳定，不要提前做 Subagent。
-
----
-
-# 19. 明确不做或暂缓的内容
-
-为了避免项目失控，以下内容不是近期目标：
-
-```text
-完整 Web/TUI
-完整 Browser Agent
+Web / TUI
+Browser Use
 Computer Use
-RAG 知识库平台
-复杂 Workflow DSL
-企业级 Credential Center
-跨平台内核 Sandbox 全实现
-Kubernetes 调度
-分布式 Agent Cluster
-大量模型 Provider
+SSH / Remote Execution
+LSP
+Full Sandbox
+Workflow Engine
+Subagent
+Scheduling / Webhook
 ```
 
-判断一个需求是否应该加入主线时，先问：
+Subagent 如果后续实现，应重点研究：
 
-> 它是否帮助我们理解或改进 Agent Runtime 的可靠性、长任务控制、工具治理或可评测性？
+```text
+context isolation
+tool restriction
+budget inheritance
+cancellation propagation
+result aggregation
+```
 
-如果答案是否定的，优先不做。
+而不是只做“再调用一次 Agent”。
 
 ---
 
-# 20. 推荐开发顺序
+# 19. 推荐开发顺序
 
-最终建议严格按照：
+严格按依赖推进：
 
 ```text
-Phase 0  Baseline / Ownership
-    ↓
+Phase 0  Baseline
+   ↓
 Phase 1  Trace / Metrics
-    ↓
-Phase 2  Session Persistence / Resume
-    ↓
-Phase 3  Run Controller / Budget
-    ↓
+   ↓
+Phase 2  JSONL Session Persistence / Resume
+   ↓
+Phase 3  Run Controller
+   ↓
 Phase 4  Tool Runtime V2
-    ↓
+   ↓
 Phase 5  Parallel Tool Calls
-    ↓
-Phase 6  Context Manager / Compaction
-    ↓
-Phase 7  MCP Runtime
-    ↓
+   ↓
+Phase 6  Context Compaction
+   ↓
+Phase 7  Managed MCP Lifecycle
+   ↓
 Phase 8  Progressive Tool Disclosure
-    ↓
+   ↓
 Phase 9  Semantic Progress Detection
-    ↓
+   ↓
 Phase 10 Agent Evaluation
-    ↓
+   ↓
 Phase 11 Fault Injection
-    ↓
-Optional  Subagent
 ```
 
-其中真正决定项目是否适合简历的核心不是“做完多少阶段”，而是：
+不要同时让 Coding Agent 修改多个 Phase。
+
+每个阶段使用：
 
 ```text
-Phase 2~6 是否实现扎实
-+
-Phase 8~10 是否形成自己的设计与实验
+Design Doc
+  ↓
+Implementation
+  ↓
+Unit Tests
+  ↓
+Integration Tests
+  ↓
+Benchmark / Failure Tests
+  ↓
+Commit
 ```
 
 ---
 
-# 21. 每个 Phase 的开发模板
-
-后续交给 Coding Agent 开发时，每一阶段必须按下面顺序执行。
-
-## Step 1：读现有代码
-
-先指出：
+# 20. Git Commit 建议
 
 ```text
-当前行为
-入口文件
-相关 Runtime
-已有测试
-不允许破坏的不变式
-```
-
-## Step 2：写 Design Note
-
-在：
-
-```text
-docs/design/<feature>.md
-```
-
-至少回答：
-
-```text
-Problem
-Goals
-Non-goals
-Architecture
-Public API
-Data Model
-Failure Semantics
-Compatibility
-Testing
-```
-
-## Step 3：先增加核心测试
-
-至少包含：
-
-```text
-happy path
-edge case
-failure path
-cancellation
-```
-
-## Step 4：实现最小闭环
-
-不要一次加入 V1/V2/V3 所有功能。
-
-例如 Persistence：
-
-```text
-MemoryStore abstraction
-      ↓
-SQLiteStore
-      ↓
-Resume
-      ↓
-Crash recovery
-```
-
-分 commit 完成。
-
-## Step 5：Integration Test
-
-必须通过真实：
-
-```text
-Cordis Context
-Plugins
-AgentLoop
-Mock LLM
-```
-
-不能只测孤立 class。
-
-## Step 6：更新文档
-
-同步更新：
-
-```text
-README
-ARCHITECTURE
-CHANGELOG
-Design Note
-```
-
-## Step 7：Benchmark（适用时）
-
-保存原始输出，不手工编写数字。
-
----
-
-# 22. Git Commit 规范建议
-
-希望最终 Git History 本身就是开发过程说明书。
-
-例如：
-
-```text
-feat(trace): add structured agent run tracing
-
-feat(session): introduce session store abstraction
-feat(session): persist event logs with sqlite
-feat(session): resume persisted sessions
-feat(session): detect interrupted tool calls on recovery
-
-feat(agent): add run budget controller
-feat(agent): return structured stop reasons
-
+chore: establish runtime baseline
+feat(trace): add structured run and tool tracing
+feat(session): introduce session persistence seam
+feat(session): add append-only jsonl session store
+feat(session): support persisted session resume
+feat(session): recover torn jsonl tail
+feat(agent): add run controller and execution budgets
 feat(tools): add schema validation pipeline
-feat(tools): enforce cooperative tool timeouts
-feat(tools): add tool execution metadata
-feat(tools): execute concurrency-safe calls in parallel
-
-feat(context): add token-aware context projection
-feat(context): compact old history into summaries
-
-feat(mcp): add managed server lifecycle
-feat(mcp): reconnect failed servers with backoff
-
-feat(router): add tool catalog and top-k routing
-feat(router): add dynamic tool_search activation
-
-feat(agent): detect no-progress execution patterns
-
+feat(tools): add timeout and cancellation
+feat(tools): support bounded parallel safe calls
+feat(context): add token-aware compaction
+feat(mcp): add managed mcp lifecycle
+feat(tools): add progressive tool disclosure
+feat(agent): add semantic progress detection
 feat(eval): add reproducible evaluation runner
-feat(eval): add failure injection suite
+feat(eval): add fault injection scenarios
 ```
 
-不要把一个月的开发全部压成：
+Git 历史应成为“从最小 Harness 一层层做出工程能力”的直接证据。
+
+---
+
+# 21. 简历项目描述的技术口径
+
+完成主要路线后，简历项目顶层统一使用 **Coding Agent Harness**，内部模块再使用 Runtime。
+
+推荐版本：
+
+## Mini-dsh — 基于插件化架构的轻量级 Coding Agent Harness
+
+**项目简介：** 参考 DeepSeek Harness 的架构设计，自主实现轻量级 Coding Agent Harness，围绕持久会话、长任务执行、上下文治理、Tool / MCP 调度与 Agent 评测构建核心能力，并针对大规模工具场景设计 Progressive Tool Disclosure 等运行时优化机制。
+
+**技术栈：** Node.js · DeepSeek API · Cordis · MCP · JSONL · JSON Schema
+
+**项目内容：**
+
+1. **插件化 Harness 架构：** 基于 Cordis `Context / Plugin / Service` 将 Session、System Prompt、LLM、Tool 与 Agent Loop 解耦为可替换服务，并以 append-only Session Event Log 作为权威历史，派生模型消息与运行状态；解决 Harness 核心能力强耦合、模块难独立演进的问题。
+
+2. **持久会话与长任务治理：** 设计 `SessionStore` 持久化 seam，自主实现 append-only JSONL Session Store、Resume 与 Replay，并对日志撕裂尾部和中断轮次进行恢复；同时引入 Run Controller，对 Step、Tool Call、Token、Cost 与执行时长进行统一预算控制，解决进程重启后会话丢失及 Agent 长任务无限执行的问题。
+
+3. **上下文与 Tool / MCP 治理：** 通过 Token-aware Compaction 将完整 Event Log 与模型可见 Context 解耦，压缩较早历史并保留近期原始对话；重构 Tool Runtime，加入 Schema Validation、Timeout / Cancellation 与 bounded parallel tool scheduling，并在 MCP 生命周期管理之上设计 Progressive Tool Disclosure，按任务选择并动态暴露相关 Tool Schema，解决长会话上下文膨胀及大规模工具带来的 Schema 开销问题。
+
+4. **可观测与评测：** 构建 `Session → Run → Step → Tool Call` 级 Trace，记录 Token、Tool Call、Latency、Cost 与 Stop Reason；实现 Agent Evaluation 与 Fault Injection，对 Context Compaction、Tool Routing、长任务控制和故障恢复进行 Baseline 对照，解决 Harness 优化效果缺少统一量化依据的问题。
+
+### 简历措辞约束
+
+- 没有实现内核/容器隔离前，不写“安全沙箱”；
+- 使用官方 MCP Client 时，不写“从零实现 MCP 协议”；
+- JSONL 是 Session 权威存储，SQLite 若后续加入，只描述为 Query / Metrics / Index；
+- 没有真实 Benchmark 数据前，不写“降低 XX%”“提升 XX%”；
+- `Progressive Tool Disclosure`、`Run Controller`、`Semantic Progress Detection` 属于本项目自己的重点扩展，可以重点讲设计与实验；
+- 官方已经存在的 Persistence / Compaction / Parallel Tool 等能力，表述为“参考成熟 Harness 的设计思想后自主实现简化版本”，不要暗示这些机制由本项目原创提出。
+
+---
+
+# 22. 最终验收标准
+
+核心路线完成后，至少满足：
 
 ```text
-feat: improve agent
-```
-
----
-
-# 23. 最终 README 应该如何演进
-
-当前 README 仍然应继续说明“这是从 mini-dsh 学习版演进而来”。
-
-随着功能完成，可以逐步把首页结构改成：
-
-```text
-Project Positioning
-Architecture
-Core Runtime
-Reliability
-Tool Scaling
-Evaluation
-Benchmarks
-Learning / Upstream
-```
-
-但必须满足：
-
-> 功能真正完成并通过测试后，才能从 Roadmap 移到 Features。
-
-Roadmap 中的内容不能提前包装成已有能力。
-
----
-
-# 24. 最终简历叙事
-
-只有真正完成后才允许使用下面的描述。
-
-## Runtime 基础
-
-可以形成：
-
-> 基于 Cordis 插件架构扩展轻量级 Agent Runtime，将 Session、LLM、Tool 与 Agent Loop 解耦为可插拔服务，并围绕 Event Sourcing 实现持久会话、执行控制和上下文治理。
-
-## Persistence
-
-完成 Phase 2 后：
-
-> 基于 Event Sourcing 与 SQLite 实现 Agent Session 持久化、Resume 与异常中断恢复，保持 Tool Call / Tool Result 协议一致性，并针对非幂等副作用工具避免盲目重试。
-
-## Run Controller
-
-完成 Phase 3 后：
-
-> 设计 Run Controller，对 Agent 长任务统一实施 Step、Tool Call、Token、Cost 与执行时长预算治理，并通过结构化 Stop Reason 管理正常结束、取消和资源超限等状态。
-
-## Tool Runtime
-
-完成 Phase 4~5 后：
-
-> 重构 Tool Runtime 执行流水线，实现参数校验、超时与取消、标准化错误及工具并发元数据，并依据副作用与并发安全属性调度多 Tool 并行执行。
-
-## Tool Scaling
-
-完成 Phase 8 后：
-
-> 面向大规模 Tool/MCP 场景设计 Progressive Tool Disclosure，通过 Tool Catalog、Top-K Routing 与动态 Tool Search 按需暴露工具 Schema，降低无关工具带来的上下文开销。
-
-## Evaluation
-
-完成 Phase 9~11 后：
-
-> 构建 Agent Trace、Evaluation 与 Fault Injection 框架，对长任务、工具路由、上下文压力及故障恢复进行可重复评测，统计任务成功率、Step、Tool Call、Token、Cost 与时延，并通过 Baseline 实验验证 Runtime 优化效果。
-
-注意：
-
-> 没有真实 Benchmark 数字之前，禁止在简历中虚构百分比。
-
----
-
-# 25. 面试时最终应该能回答的问题
-
-如果这个项目开发成功，至少应该可以不看代码回答：
-
-1. 为什么 Session Event Log 比直接保存 Messages 更适合作为 Source of Truth？
-2. Event Log 持久化以后，为什么仍然需要 Context Projection？
-3. Crash Recovery 时为什么不能直接 retry 所有 Tool？
-4. 幂等性与 Side Effect 有什么区别？
-5. Agent Loop 为什么需要 Run-level Budget，而不仅仅是 Tool Timeout？
-6. Step Limit、Token Limit、Cost Limit 的优先级如何处理？
-7. Cancellation 为什么可能破坏 tool_calls / tool_result 协议？
-8. JS Tool Timeout 为什么通常只是 cooperative cancellation？
-9. 哪些 Tool 可以并行？如何定义 concurrency safe？
-10. 并行 Tool 完成顺序与模型 Tool Call 顺序不同怎么办？
-11. Context Compaction 为什么不能直接删除旧 Event？
-12. Compaction 如何避免截断 Tool Call / Tool Result？
-13. MCP Server 断线时为什么不应该把 Agent Runtime 一起打挂？
-14. 为什么工具数量增加会产生 Tool Schema Token 问题？
-15. Progressive Tool Disclosure 与 Skill Progressive Disclosure 有什么区别？
-16. Top-K Tool Routing 可能导致什么 Recall 问题？
-17. 为什么需要 `tool_search` 作为 Router 的补充？
-18. 完全相同 Tool Call Detection 为什么不足以判断 No Progress？
-19. 怎么定义“Agent 有进展”？
-20. 如何证明 Compaction / Tool Routing / Parallel Tool 真正有效？
-21. Eval 如何减少 LLM 随机性造成的误判？
-22. Replay Test 和真实模型 Benchmark 的作用分别是什么？
-23. Fault Injection 应该验证哪些 Runtime invariant？
-24. 当前 Sandbox 为什么不能称为真正安全隔离？
-25. 与官方 DeepSeek Harness 相比，这个项目为什么没有复刻所有能力？
-26. 哪些模块是上游 mini-dsh 已有，哪些是你自己实现的？
-27. 如果再给你一个月，你会优先优化哪一个 Runtime 问题？
-
-这些问题答得清楚，比功能数量更重要。
-
----
-
-# 26. 完成定义（Definition of Done）
-
-这个项目不要求变成完整生产系统。
-
-达到下面状态，就已经可以认为这一轮改造成功：
-
-```text
-[ ] Session 可以持久化并 Resume
-[ ] 一次 Run 有明确预算和 StopReason
-[ ] Tool 有统一 Schema / Timeout / Cancellation 流水线
-[ ] 安全 Tool 可以并行执行
-[ ] 长 Session 可以进行 Context Compaction
-[ ] MCP 有自己的生命周期管理层
-[ ] 每次 Run 有结构化 Trace
-[ ] Tool 数量增加时支持 Progressive Disclosure
-[ ] 可以检测至少一类 Semantic No-Progress
-[ ] 有可重复 Eval Runner
+[ ] Session 可以跨进程恢复
+[ ] JSONL Event Log 是唯一权威历史
+[ ] 撕裂尾部可以恢复
+[ ] 中断 Tool Call 不会盲目重试副作用
+[ ] Run 有统一 Budget 和 Stop Reason
+[ ] Tool 参数会被统一校验
+[ ] Tool Timeout / Cancellation 有明确语义
+[ ] 并发安全 Tool 支持有界并行
+[ ] Cancellation 保持 Tool Call / Result 一致性
+[ ] 长 Session 支持 Token-aware Compaction
+[ ] MCP Server 有 Harness 级生命周期视图
+[ ] 大规模 Tool 支持 Progressive Disclosure
+[ ] 可以检测重复/无进展执行
+[ ] 每个 Run 有结构化 Trace
+[ ] 有可重复 Eval Suite
 [ ] 有 Fault Injection Cases
-[ ] 所有核心能力都有 Unit + Integration Test
-[ ] README 明确上游与个人贡献
-[ ] Benchmark 数字全部来自真实实验
+[ ] 所有优化都有 Baseline 数据
+[ ] Git 历史可以清楚看到每个模块独立实现过程
 ```
 
----
-
-# 27. 最后原则
-
-这个项目后续不要追求：
-
-> “我实现了和官方 DSH 一样多的功能。”
-
-应该追求：
-
-> “我从一个最小 Agent Harness 出发，理解成熟 Agent Runtime 为什么需要这些机制，然后自己重新实现关键生产能力，并针对工具规模化和长任务执行问题设计了额外方案，最后通过可重复实验验证。”
-
-这才是整个项目最适合学习、GitHub 展示和简历面试的主线。
+当以上核心项完成后，这个项目不再只是“学习 mini-dsh”，而是一套有清晰设计边界、可解释故障语义、可量化实验结果的轻量级 Coding Agent Harness。

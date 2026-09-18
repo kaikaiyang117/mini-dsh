@@ -13,6 +13,7 @@ import * as sandbox from '../src/plugins/sandbox.js'
 import * as sessions from '../src/plugins/sessions.js'
 import * as systemPrompt from '../src/plugins/system-prompt.js'
 import * as tools from '../src/plugins/tools.js'
+import * as trace from '../src/plugins/trace.js'
 import * as bash from '../src/tools/bash.js'
 import * as files from '../src/tools/files.js'
 
@@ -23,6 +24,7 @@ import * as files from '../src/tools/files.js'
  */
 test('the whole plugin stack boots on Cordis and runs a full model -> tool -> model turn', async () => {
     const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'mini-dsh-smoke-'))
+    const traceDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mini-dsh-trace-smoke-'))
     const root = new Context()
 
     try {
@@ -30,6 +32,7 @@ test('the whole plugin stack boots on Cordis and runs a full model -> tool -> mo
         await root.plugin(systemPrompt)
         await root.plugin(tools)
         await root.plugin(llm)
+        await root.plugin(trace, { directory: traceDirectory })
         await root.plugin(agents)
         await root.plugin(agentLoop)
         await root.plugin(runtimeContext, { workspace })
@@ -44,6 +47,7 @@ test('the whole plugin stack boots on Cordis and runs a full model -> tool -> mo
         assert.ok(root.llm)
         assert.ok(root.agents)
         assert.ok(root.agentLoop)
+        assert.ok(root.traceRuntime)
         assert.ok(root.sandbox)
 
         // ctx.effect-based registrations from runtime-context/sandbox/tools all ran.
@@ -105,6 +109,16 @@ test('the whole plugin stack boots on Cordis and runs a full model -> tool -> mo
         assert.equal(answer, 'done')
         assert.equal(calls, 2)
 
+        const traceFiles = await fs.readdir(traceDirectory)
+        assert.equal(traceFiles.length, 1)
+        const runTrace = JSON.parse(
+            await fs.readFile(path.join(traceDirectory, traceFiles[0]), 'utf8'),
+        )
+        assert.equal(runTrace.sessionId, session.id)
+        assert.equal(runTrace.stopReason, 'completed')
+        assert.equal(runTrace.steps.length, 2)
+        assert.equal(runTrace.steps[0].toolCalls[0].toolCallId, 't1')
+
         const types = root.sessions.get(session.id).events.map((event) => event.type)
         assert.deepEqual(types, [
             'session/start',
@@ -116,6 +130,7 @@ test('the whole plugin stack boots on Cordis and runs a full model -> tool -> mo
     } finally {
         await root.fiber.dispose()
         await fs.rm(workspace, { recursive: true, force: true })
+        await fs.rm(traceDirectory, { recursive: true, force: true })
     }
 })
 

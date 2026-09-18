@@ -11,6 +11,7 @@ import * as sandbox from './plugins/sandbox.js'
 import * as sessions from './plugins/sessions.js'
 import * as systemPrompt from './plugins/system-prompt.js'
 import * as tools from './plugins/tools.js'
+import * as trace from './plugins/trace.js'
 import * as bash from './tools/bash.js'
 import * as files from './tools/files.js'
 
@@ -26,6 +27,7 @@ await root.plugin(sessions)
 await root.plugin(systemPrompt)
 await root.plugin(tools)
 await root.plugin(llm)
+await root.plugin(trace)
 await root.plugin(agents)
 await root.plugin(agentLoop)
 

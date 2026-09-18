@@ -7,7 +7,7 @@ import { AgentLoopRuntime } from '../core/agent-loop-runtime.js'
  * tools, and llm are ready before constructing the loop.
  */
 class AgentLoopService extends Service {
-    static inject = ['sessions', 'systemPrompt', 'tools', 'llm']
+    static inject = ['sessions', 'systemPrompt', 'tools', 'llm', 'traceRuntime']
 
     constructor(ctx) {
         super(ctx, 'agentLoop')
@@ -16,6 +16,7 @@ class AgentLoopService extends Service {
             systemPrompt: ctx.systemPrompt,
             tools: ctx.tools,
             llm: ctx.llm,
+            trace: ctx.traceRuntime,
         })
     }
 
@@ -25,7 +26,7 @@ class AgentLoopService extends Service {
 }
 
 export const name = 'mini-agent-loop'
-export const inject = ['sessions', 'systemPrompt', 'tools', 'llm']
+export const inject = ['sessions', 'systemPrompt', 'tools', 'llm', 'traceRuntime']
 
 export function apply(ctx) {
     ctx.plugin(AgentLoopService)

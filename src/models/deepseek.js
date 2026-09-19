@@ -30,6 +30,7 @@ export function apply(ctx, config = {}) {
                 thinking: {
                     type: thinking === 'disabled' ? 'disabled' : 'enabled',
                 },
+                stream_options: { include_usage: true },
                 ...(tools?.length ? { tools } : {}),
             }
 
@@ -54,9 +55,11 @@ export function apply(ctx, config = {}) {
 
             let content = ''
             let reasoningContent = ''
+            let usage = null
             const toolCallsMap = new Map()
 
             for await (const event of parseSSE(response)) {
+                if (event?.usage) usage = normalizeUsage(event.usage)
                 const choice = event?.choices?.[0]
                 if (!choice) continue
                 const delta = choice.delta ?? {}
@@ -84,6 +87,7 @@ export function apply(ctx, config = {}) {
                 content,
                 reasoningContent: reasoningContent || undefined,
                 toolCalls,
+                usage,
             }
         },
     }
@@ -98,6 +102,27 @@ export function apply(ctx, config = {}) {
             }),
         'register deepseek provider',
     )
+}
+
+export function normalizeUsage(usage) {
+    if (!usage) return null
+
+    return {
+        inputTokens: numberOrNull(usage.prompt_tokens),
+        outputTokens: numberOrNull(usage.completion_tokens),
+        reasoningTokens: numberOrNull(
+            usage.completion_tokens_details?.reasoning_tokens ?? usage.reasoning_tokens,
+        ),
+        cacheHitTokens: numberOrNull(
+            usage.prompt_cache_hit_tokens ?? usage.prompt_tokens_details?.cached_tokens,
+        ),
+        cacheMissTokens: numberOrNull(usage.prompt_cache_miss_tokens),
+        cost: null,
+    }
+}
+
+function numberOrNull(value) {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
 export async function* parseSSE(response) {

@@ -51,10 +51,12 @@ export class TraceRuntime {
             durationMs: null,
             stopReason: null,
             usage: {
-                inputTokens: 0,
-                outputTokens: 0,
-                reasoningTokens: 0,
-                cost: 0,
+                inputTokens: null,
+                outputTokens: null,
+                reasoningTokens: null,
+                cacheHitTokens: null,
+                cacheMissTokens: null,
+                cost: null,
             },
             steps: [],
         }
@@ -68,8 +70,9 @@ export class TraceRuntime {
                 if (!finished) {
                     finished = true
                     trace.stopReason = normalizeStopReason(stopReason)
-                    trace.endedAt = toIso(this.now())
-                    trace.durationMs = Math.max(0, this.now() - startedAtMs)
+                    const endedAtMs = this.now()
+                    trace.endedAt = toIso(endedAtMs)
+                    trace.durationMs = Math.max(0, endedAtMs - startedAtMs)
                     await this.#persist(trace)
                 }
                 return trace
@@ -91,22 +94,28 @@ export class TraceRuntime {
 
         let llmFinished = false
         let stepFinished = false
+        let llmStartedAtMs = null
 
         return {
             stepId: step.stepId,
+            startLlm: () => {
+                llmStartedAtMs ??= this.now()
+            },
             finishLlm: (usage) => {
                 if (llmFinished) return
                 llmFinished = true
-                step.llmLatencyMs = Math.max(0, this.now() - startedAtMs)
+                const endedAtMs = this.now()
+                step.llmLatencyMs =
+                    llmStartedAtMs === null ? null : Math.max(0, endedAtMs - llmStartedAtMs)
                 addUsage(trace.usage, usage)
             },
             startToolCall: (call) => this.#startToolCall(step, call),
             finish: () => {
                 if (stepFinished) return
                 stepFinished = true
-                if (!llmFinished) step.llmLatencyMs = Math.max(0, this.now() - startedAtMs)
-                step.endedAt = toIso(this.now())
-                step.durationMs = Math.max(0, this.now() - startedAtMs)
+                const endedAtMs = this.now()
+                step.endedAt = toIso(endedAtMs)
+                step.durationMs = Math.max(0, endedAtMs - startedAtMs)
             },
         }
     }
@@ -129,8 +138,9 @@ export class TraceRuntime {
                 if (finished) return
                 finished = true
                 toolCall.status = status
-                toolCall.endedAt = toIso(this.now())
-                toolCall.durationMs = Math.max(0, this.now() - startedAtMs)
+                const endedAtMs = this.now()
+                toolCall.endedAt = toIso(endedAtMs)
+                toolCall.durationMs = Math.max(0, endedAtMs - startedAtMs)
             },
         }
     }
@@ -170,19 +180,33 @@ function splitModel(selection) {
 }
 
 function addUsage(target, usage = {}) {
-    target.inputTokens += numberFrom(usage.inputTokens, usage.promptTokens, usage.prompt_tokens)
-    target.outputTokens += numberFrom(
-        usage.outputTokens,
-        usage.completionTokens,
-        usage.completion_tokens,
+    addUsageValue(
+        target,
+        'inputTokens',
+        numberFrom(usage.inputTokens, usage.promptTokens, usage.prompt_tokens),
     )
-    target.reasoningTokens += numberFrom(usage.reasoningTokens, usage.reasoning_tokens)
-    target.cost += numberFrom(usage.cost)
+    addUsageValue(
+        target,
+        'outputTokens',
+        numberFrom(usage.outputTokens, usage.completionTokens, usage.completion_tokens),
+    )
+    addUsageValue(
+        target,
+        'reasoningTokens',
+        numberFrom(usage.reasoningTokens, usage.reasoning_tokens),
+    )
+    addUsageValue(target, 'cacheHitTokens', numberFrom(usage.cacheHitTokens))
+    addUsageValue(target, 'cacheMissTokens', numberFrom(usage.cacheMissTokens))
+    addUsageValue(target, 'cost', numberFrom(usage.cost))
 }
 
 function numberFrom(...values) {
     const value = values.find((item) => item !== undefined && item !== null)
-    return typeof value === 'number' && Number.isFinite(value) ? value : 0
+    return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function addUsageValue(target, key, value) {
+    if (value !== null) target[key] = (target[key] ?? 0) + value
 }
 
 function normalizeStopReason(reason) {

@@ -34,7 +34,7 @@ test('Agent run records identity, multiple steps, usage, and tool latency', asyn
     const trace = new TraceRuntime({ directory })
 
     try {
-        const { tools, llm, agents, loop, session } = createHarness(trace)
+        const { sessions, tools, llm, agents, loop, session } = createHarness(trace)
         tools.register({
             name: 'clock',
             description: 'clock',
@@ -87,6 +87,8 @@ test('Agent run records identity, multiple steps, usage, and tool latency', asyn
             inputTokens: 22,
             outputTokens: 5,
             reasoningTokens: 1,
+            cacheHitTokens: null,
+            cacheMissTokens: null,
             cost: 0.01,
         })
         assert.equal(run.steps.length, 2)
@@ -94,6 +96,60 @@ test('Agent run records identity, multiple steps, usage, and tool latency', asyn
         assert.equal(run.steps[0].toolCalls[0].status, 'completed')
         assert.ok(run.steps[0].llmLatencyMs >= 0)
         assert.ok(run.steps[0].toolCalls[0].durationMs >= 0)
+
+        const events = sessions.get(session.id).events.slice(1)
+        assert.ok(events.every((event) => event.data.runId === run.runId))
+        assert.equal(events[1].data.stepId, run.steps[0].stepId)
+        assert.equal(events.at(-1).data.stepId, run.steps[1].stepId)
+    } finally {
+        await fs.rm(directory, { recursive: true, force: true })
+    }
+})
+
+test('LLM latency starts at llm.chat and step duration includes the whole step', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'mini-dsh-trace-clock-'))
+    const timestamps = [0, 100, 250, 300, 350, 400, 500, 600, 700, 900, 1000, 1100]
+    const trace = new TraceRuntime({
+        directory,
+        now: () => {
+            const timestamp = timestamps.shift()
+            assert.notEqual(timestamp, undefined)
+            return timestamp
+        },
+    })
+
+    try {
+        const { tools, llm, agents, loop, session } = createHarness(trace)
+        tools.register({
+            name: 'clock',
+            description: 'clock',
+            parameters: { type: 'object' },
+            execute: async () => 'done',
+        })
+        let calls = 0
+        llm.register(
+            'mock',
+            {
+                models: ['clock-model'],
+                async chat() {
+                    calls += 1
+                    return calls === 1
+                        ? { toolCalls: [{ id: 'tool-1', name: 'clock', arguments: {} }] }
+                        : { content: 'done', toolCalls: [] }
+                },
+            },
+            { defaultModel: 'clock-model' },
+        )
+        const agent = agents.create({ sessionId: session.id, model: 'mock/clock-model', loop })
+
+        await agent.send('measure latency')
+        const run = await loadOnlyTrace(directory)
+        assert.equal(run.steps[0].llmLatencyMs, 50)
+        assert.equal(run.steps[0].durationMs, 400)
+        assert.equal(run.steps[1].llmLatencyMs, 200)
+        assert.equal(run.steps[1].durationMs, 400)
+        assert.equal(run.durationMs, 1100)
+        assert.deepEqual(timestamps, [])
     } finally {
         await fs.rm(directory, { recursive: true, force: true })
     }
@@ -213,6 +269,7 @@ test('LLM failure is recorded as internal_error without changing the thrown erro
         await assert.rejects(() => agent.send('fail'), /provider unavailable/)
         const run = await loadOnlyTrace(directory)
         assert.equal(run.stopReason, 'internal_error')
+        assert.equal(run.usage.cost, null)
     } finally {
         await fs.rm(directory, { recursive: true, force: true })
     }

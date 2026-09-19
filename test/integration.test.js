@@ -159,3 +159,39 @@ test('external plugin loader tolerates an optional failure and enforces a requir
         await root.fiber.dispose()
     }
 })
+
+test('AgentLoop remains usable when the optional trace plugin is not loaded', async () => {
+    const root = new Context()
+
+    try {
+        await root.plugin(sessions)
+        await root.plugin(systemPrompt)
+        await root.plugin(tools)
+        await root.plugin(llm)
+        await root.plugin(agents)
+        await root.plugin(agentLoop)
+
+        assert.ok(root.agentLoop)
+        root.llm.register(
+            'mock',
+            {
+                models: ['no-trace'],
+                async chat() {
+                    return { content: 'ok', toolCalls: [] }
+                },
+            },
+            { defaultModel: 'no-trace' },
+        )
+        const session = root.sessions.create()
+        const agent = root.agents.create({
+            sessionId: session.id,
+            model: 'mock/no-trace',
+            loop: root.agentLoop,
+        })
+
+        assert.equal(await agent.send('without trace'), 'ok')
+        assert.match(session.events[1].data.runId, /^[0-9a-f-]{36}$/)
+    } finally {
+        await root.fiber.dispose()
+    }
+})

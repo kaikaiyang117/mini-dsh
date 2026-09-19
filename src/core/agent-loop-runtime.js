@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 const CANCELLED_RESULT = 'ToolError: the run was cancelled before this tool ran'
 
 /**
@@ -20,11 +22,12 @@ export class AgentLoopRuntime {
     async run(agent, input, { signal, onReasoning, onContent, onToolCall, onToolResult } = {}) {
         const sessionId = agent.sessionId
         const runTrace = this.trace?.startRun({ sessionId, model: agent.model })
+        const runId = runTrace?.runId ?? randomUUID()
         let stopReason = 'internal_error'
 
         try {
             // Session events are the source of truth; user input goes into the log first.
-            this.sessions.append(sessionId, 'user/message', { content: input })
+            this.sessions.append(sessionId, 'user/message', { content: input, runId })
 
             let step = 0
 
@@ -36,6 +39,7 @@ export class AgentLoopRuntime {
                 }
 
                 const stepTrace = runTrace?.startStep()
+                const stepId = stepTrace?.stepId ?? randomUUID()
                 try {
                     // Reassemble the system prompt every step so dynamic bits (time, cwd) stay fresh.
                     const system = await this.systemPrompt.assemble({
@@ -48,6 +52,7 @@ export class AgentLoopRuntime {
                     const messages = this.sessions.deriveMessages(sessionId)
 
                     let response
+                    stepTrace?.startLlm()
                     try {
                         response = await this.llm.chat(
                             {
@@ -69,7 +74,11 @@ export class AgentLoopRuntime {
                     // No tool calls means the model considers the task done.
                     if (toolCalls.length === 0) {
                         const content = response.content ?? ''
-                        this.sessions.append(sessionId, 'assistant/message', { content })
+                        this.sessions.append(sessionId, 'assistant/message', {
+                            content,
+                            runId,
+                            stepId,
+                        })
                         stopReason = 'completed'
                         return content
                     }
@@ -80,6 +89,8 @@ export class AgentLoopRuntime {
                         content: response.content ?? null,
                         reasoningContent: response.reasoningContent,
                         toolCalls,
+                        runId,
+                        stepId,
                     })
 
                     // A single model turn may request several tools; run them all before the next turn.
@@ -103,6 +114,8 @@ export class AgentLoopRuntime {
                                 name: call.name,
                                 isError: true,
                                 content: CANCELLED_RESULT,
+                                runId,
+                                stepId,
                             })
                             continue
                         }
@@ -136,6 +149,8 @@ export class AgentLoopRuntime {
                             name: call.name,
                             isError: result.isError,
                             content: renderedContent,
+                            runId,
+                            stepId,
                         })
                     }
 

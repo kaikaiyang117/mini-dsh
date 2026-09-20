@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -16,6 +17,65 @@ import * as tools from '../src/plugins/tools.js'
 import * as trace from '../src/plugins/trace.js'
 import * as bash from '../src/tools/bash.js'
 import * as files from '../src/tools/files.js'
+
+function runCli(directory, commands) {
+    return new Promise((resolve, reject) => {
+        const child = spawn(process.execPath, ['src/index.js'], {
+            cwd: path.resolve('.'),
+            env: {
+                ...process.env,
+                MINI_DSH_SESSION_DIR: directory,
+                MINI_DSH_MODEL: 'deepseek/deepseek-v4-pro',
+                DEEPSEEK_API_KEY: '',
+            },
+            stdio: ['pipe', 'pipe', 'pipe'],
+        })
+        let stdout = ''
+        let stderr = ''
+        let settled = false
+        const timer = setTimeout(() => {
+            if (settled) return
+            settled = true
+            child.kill('SIGTERM')
+            reject(new Error(`CLI integration test timed out\n${stdout}${stderr}`))
+        }, 15_000)
+
+        child.stdout.on('data', (chunk) => {
+            stdout += chunk
+        })
+        child.stderr.on('data', (chunk) => {
+            stderr += chunk
+        })
+        child.once('error', (error) => {
+            clearTimeout(timer)
+            if (!settled) {
+                settled = true
+                reject(error)
+            }
+        })
+        child.once('close', (code) => {
+            clearTimeout(timer)
+            if (settled) return
+            settled = true
+            if (code !== 0) reject(new Error(`CLI exited with ${code}\n${stdout}${stderr}`))
+            else resolve(stdout + stderr)
+        })
+
+        ;(async () => {
+            const startedAt = Date.now()
+            while (!stdout.includes('User > ')) {
+                if (Date.now() - startedAt > 10_000) {
+                    throw new Error(`CLI prompt did not appear\n${stdout}${stderr}`)
+                }
+                await new Promise((resolveReady) => setTimeout(resolveReady, 100))
+            }
+            for (const command of commands) {
+                child.stdin.write(`${command}\n`)
+                await new Promise((resolveReady) => setTimeout(resolveReady, 400))
+            }
+        })().catch(reject)
+    })
+}
 
 /**
  * Boots the same plugin stack as src/index.js (minus the CLI) on a real
@@ -97,7 +157,7 @@ test('the whole plugin stack boots on Cordis and runs a full model -> tool -> mo
         assert.equal(root.llm.defaultSelection(), 'mock/smoke')
         assert.deepEqual(root.llm.models(), ['mock/smoke'])
 
-        const session = root.sessions.create({ source: 'smoke' })
+        const session = await root.sessions.create({ source: 'smoke' })
         const agent = root.agents.create({
             name: 'smoke',
             sessionId: session.id,
@@ -182,7 +242,7 @@ test('AgentLoop remains usable when the optional trace plugin is not loaded', as
             },
             { defaultModel: 'no-trace' },
         )
-        const session = root.sessions.create()
+        const session = await root.sessions.create()
         const agent = root.agents.create({
             sessionId: session.id,
             model: 'mock/no-trace',
@@ -193,5 +253,27 @@ test('AgentLoop remains usable when the optional trace plugin is not loaded', as
         assert.match(session.events[1].data.runId, /^[0-9a-f-]{36}$/)
     } finally {
         await root.fiber.dispose()
+    }
+})
+
+test('CLI can create, list, and resume durable sessions', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'mini-dsh-cli-session-'))
+    const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-[4-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi
+
+    try {
+        const firstOutput = await runCli(directory, ['/sessions', '/new', '/sessions', '/exit'])
+        const firstIds = [...new Set(firstOutput.match(uuidPattern) ?? [])]
+        assert.ok(firstIds.length >= 2, firstOutput)
+        assert.match(firstOutput, /New session:/)
+
+        const resumedOutput = await runCli(directory, [
+            `/resume ${firstIds[0]}`,
+            '/sessions',
+            '/exit',
+        ])
+        assert.match(resumedOutput, new RegExp(`Resumed session: ${firstIds[0]}`))
+        assert.match(resumedOutput, new RegExp(firstIds[0]))
+    } finally {
+        await fs.rm(directory, { recursive: true, force: true })
     }
 })

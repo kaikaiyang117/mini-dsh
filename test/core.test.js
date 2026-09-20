@@ -10,16 +10,16 @@ import { SessionRuntime } from '../src/core/session-runtime.js'
 import { SystemPromptRuntime } from '../src/core/system-prompt-runtime.js'
 import { ToolRuntime } from '../src/core/tool-runtime.js'
 
-test('Session derives tool-call history from the event log and keeps reasoning_content', () => {
+test('Session derives tool-call history from the event log and keeps reasoning_content', async () => {
     const sessions = new SessionRuntime()
-    const s = sessions.create()
+    const s = await sessions.create()
 
-    sessions.append(s.id, 'user/message', { content: 'what time is it' })
-    sessions.append(s.id, 'assistant/tool_calls', {
+    await sessions.append(s.id, 'user/message', { content: 'what time is it' })
+    await sessions.append(s.id, 'assistant/tool_calls', {
         reasoningContent: 'I need to call bash date',
         toolCalls: [{ id: 'c1', name: 'bash', arguments: { command: 'date' } }],
     })
-    sessions.append(s.id, 'tool/result', {
+    await sessions.append(s.id, 'tool/result', {
         toolCallId: 'c1',
         content: '12:00',
     })
@@ -30,18 +30,18 @@ test('Session derives tool-call history from the event log and keeps reasoning_c
     assert.equal(messages[2].role, 'tool')
 })
 
-test('Session clear keeps the same id and drops derived chat history', () => {
+test('Session reset keeps the same id and drops derived chat history', async () => {
     const sessions = new SessionRuntime()
-    const s = sessions.create()
+    const s = await sessions.create()
     const id = s.id
 
-    sessions.append(id, 'user/message', { content: 'hello' })
-    sessions.append(id, 'assistant/message', { content: 'hi' })
-    sessions.clear(id)
+    await sessions.append(id, 'user/message', { content: 'hello' })
+    await sessions.append(id, 'assistant/message', { content: 'hi' })
+    await sessions.clear(id)
 
     assert.equal(sessions.get(id).id, id)
-    assert.equal(sessions.get(id).events[0].type, 'session/start')
-    assert.equal(sessions.get(id).events[0].data.reset, true)
+    assert.equal(sessions.get(id).events.at(-1).type, 'session/reset')
+    assert.equal(sessions.get(id).events.length, 4)
     assert.deepEqual(sessions.deriveMessages(id), [])
 })
 
@@ -155,7 +155,7 @@ test('Agent loop completes a model -> tool -> model turn', async () => {
         { defaultModel: 'demo' },
     )
 
-    const s = sessions.create()
+    const s = await sessions.create()
     const loop = new AgentLoopRuntime({ sessions, systemPrompt, tools, llm })
     const agent = agents.create({
         sessionId: s.id,
@@ -204,7 +204,7 @@ test('Cancelling a multi-tool turn still records a result for every tool_call', 
         { defaultModel: 'demo' },
     )
 
-    const s = sessions.create()
+    const s = await sessions.create()
     const loop = new AgentLoopRuntime({ sessions, systemPrompt, tools, llm })
     const agent = agents.create({ sessionId: s.id, model: 'mock/demo', loop })
 
@@ -262,7 +262,7 @@ test('Agent loop has no 12-step cap and finishes after 20 tool calls', async () 
         { defaultModel: 'long' },
     )
 
-    const s = sessions.create()
+    const s = await sessions.create()
     const loop = new AgentLoopRuntime({ sessions, systemPrompt, tools, llm })
     const agent = agents.create({
         sessionId: s.id,
@@ -315,7 +315,7 @@ test('Agent loop streams reasoning, content, tool-call, and tool-result chunks',
         { defaultModel: 'stream-model' },
     )
 
-    const s = sessions.create()
+    const s = await sessions.create()
     const loop = new AgentLoopRuntime({ sessions, systemPrompt, tools, llm })
     const agent = agents.create({
         sessionId: s.id,

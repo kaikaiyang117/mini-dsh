@@ -23,7 +23,9 @@ const { default: externalConfig } = await import('../plugins.config.js')
 const root = new Context()
 const workspace = process.env.MINI_DSH_WORKSPACE ?? process.cwd()
 
-await root.plugin(sessions)
+await root.plugin(sessions, {
+    directory: process.env.MINI_DSH_SESSION_DIR ?? '.data/sessions',
+})
 await root.plugin(systemPrompt)
 await root.plugin(tools)
 await root.plugin(llm)

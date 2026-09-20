@@ -17,14 +17,14 @@ async function loadOnlyTrace(directory) {
     return JSON.parse(await fs.readFile(path.join(directory, entries[0]), 'utf8'))
 }
 
-function createHarness(trace) {
+async function createHarness(trace) {
     const sessions = new SessionRuntime()
     const systemPrompt = new SystemPromptRuntime()
     const tools = new ToolRuntime()
     const llm = new LlmRuntime()
     const agents = new AgentRuntime()
     const loop = new AgentLoopRuntime({ sessions, systemPrompt, tools, llm, trace })
-    const session = sessions.create()
+    const session = await sessions.create()
 
     return { sessions, tools, llm, agents, loop, session }
 }
@@ -34,7 +34,7 @@ test('Agent run records identity, multiple steps, usage, and tool latency', asyn
     const trace = new TraceRuntime({ directory })
 
     try {
-        const { sessions, tools, llm, agents, loop, session } = createHarness(trace)
+        const { sessions, tools, llm, agents, loop, session } = await createHarness(trace)
         tools.register({
             name: 'clock',
             description: 'clock',
@@ -119,7 +119,7 @@ test('LLM latency starts at llm.chat and step duration includes the whole step',
     })
 
     try {
-        const { tools, llm, agents, loop, session } = createHarness(trace)
+        const { tools, llm, agents, loop, session } = await createHarness(trace)
         tools.register({
             name: 'clock',
             description: 'clock',
@@ -161,7 +161,7 @@ test('Cancelled multi-tool run records cancelled stop reason and every tool stat
     const abort = new AbortController()
 
     try {
-        const { tools, llm, agents, loop, session } = createHarness(trace)
+        const { tools, llm, agents, loop, session } = await createHarness(trace)
         tools.register({
             name: 'slow',
             description: 'slow',
@@ -216,7 +216,7 @@ test('Each Agent.send creates an independent run trace', async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'mini-dsh-trace-runs-'))
 
     try {
-        const { llm, agents, loop, session } = createHarness(new TraceRuntime({ directory }))
+        const { llm, agents, loop, session } = await createHarness(new TraceRuntime({ directory }))
         llm.register(
             'mock',
             {
@@ -253,7 +253,7 @@ test('LLM failure is recorded as internal_error without changing the thrown erro
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'mini-dsh-trace-error-'))
 
     try {
-        const { llm, agents, loop, session } = createHarness(new TraceRuntime({ directory }))
+        const { llm, agents, loop, session } = await createHarness(new TraceRuntime({ directory }))
         llm.register(
             'mock',
             {

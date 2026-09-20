@@ -27,7 +27,7 @@ export class AgentLoopRuntime {
 
         try {
             // Session events are the source of truth; user input goes into the log first.
-            this.sessions.append(sessionId, 'user/message', { content: input, runId })
+            await this.sessions.append(sessionId, 'user/message', { content: input, runId })
 
             let step = 0
 
@@ -74,7 +74,7 @@ export class AgentLoopRuntime {
                     // No tool calls means the model considers the task done.
                     if (toolCalls.length === 0) {
                         const content = response.content ?? ''
-                        this.sessions.append(sessionId, 'assistant/message', {
+                        await this.sessions.append(sessionId, 'assistant/message', {
                             content,
                             runId,
                             stepId,
@@ -85,7 +85,7 @@ export class AgentLoopRuntime {
 
                     // Keep reasoning_content on the same assistant/tool_calls event so later
                     // requests can send DeepSeek thinking back with this turn.
-                    this.sessions.append(sessionId, 'assistant/tool_calls', {
+                    await this.sessions.append(sessionId, 'assistant/tool_calls', {
                         content: response.content ?? null,
                         reasoningContent: response.reasoningContent,
                         toolCalls,
@@ -109,7 +109,7 @@ export class AgentLoopRuntime {
 
                         if (cancelled) {
                             toolTrace?.finish('cancelled')
-                            this.sessions.append(sessionId, 'tool/result', {
+                            await this.sessions.append(sessionId, 'tool/result', {
                                 toolCallId: call.id,
                                 name: call.name,
                                 isError: true,
@@ -144,7 +144,7 @@ export class AgentLoopRuntime {
                             toolCallId: call.id,
                         })
 
-                        this.sessions.append(sessionId, 'tool/result', {
+                        await this.sessions.append(sessionId, 'tool/result', {
                             toolCallId: call.id,
                             name: call.name,
                             isError: result.isError,

@@ -1,8 +1,9 @@
-const BYTES_PER_TOKEN = 4
+const BYTES_PER_TOKEN = 3
 
 /**
- * Provider-neutral request estimator. This is deliberately heuristic until a
- * model-specific tokenizer is injected behind the same interface.
+ * Provider-neutral request estimator. This deliberately conservative heuristic
+ * is a context-pressure guard, not billing or provider usage truth. A
+ * model-specific tokenizer can be injected behind the same interface later.
  */
 export class TokenMeter {
     estimateRequest({ model: _model, system, messages = [], tools = [] } = {}) {

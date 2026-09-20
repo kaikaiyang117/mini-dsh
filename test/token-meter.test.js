@@ -62,3 +62,30 @@ test('TokenMeter returns a stable zero estimate for an empty request', () => {
         method: 'heuristic-v1',
     })
 })
+
+test('TokenMeter conservatively estimates Chinese text with heuristic-v1', () => {
+    const meter = new TokenMeter()
+    const estimate = meter.estimateRequest({ system: '中文测试' })
+
+    assert.deepEqual(estimate, {
+        tokens: 4,
+        exact: false,
+        method: 'heuristic-v1',
+    })
+    assert.deepEqual(meter.estimateRequest({ system: '中文测试' }), estimate)
+})
+
+test('TokenMeter deterministically estimates mixed Chinese and English text', () => {
+    const meter = new TokenMeter()
+    const request = {
+        system: 'hello中文',
+        messages: [{ role: 'user', content: '请 summarize this' }],
+    }
+    const first = meter.estimateRequest(request)
+    const second = meter.estimateRequest(request)
+
+    assert.deepEqual(second, first)
+    assert.ok(first.tokens > 0)
+    assert.equal(first.exact, false)
+    assert.equal(first.method, 'heuristic-v1')
+})

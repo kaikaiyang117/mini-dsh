@@ -1,4 +1,4 @@
-export const RUN_STOP_REASONS = Object.freeze([
+export const STOP_REASONS = Object.freeze([
     'completed',
     'cancelled',
     'step_limit',
@@ -8,7 +8,17 @@ export const RUN_STOP_REASONS = Object.freeze([
     'output_token_limit',
     'cost_limit',
     'tool_failure_limit',
+    'context_overflow',
+    'no_progress',
     'internal_error',
+])
+
+const INTEGER_POLICY_KEYS = new Set([
+    'maxSteps',
+    'maxToolCalls',
+    'maxInputTokens',
+    'maxOutputTokens',
+    'maxToolFailures',
 ])
 
 const POLICY_KEYS = [
@@ -37,6 +47,7 @@ export class RunController {
     #toolFailures = 0
     #cost = 0
     #costKnown = true
+    #hasUsage = false
 
     constructor({ policy = {}, now = () => Date.now() } = {}) {
         this.#policy = normalizeRunPolicy(policy)
@@ -70,6 +81,7 @@ export class RunController {
         const external = this.#externalDecision(signal)
         if (external) return external
 
+        this.#hasUsage = true
         if (finite(usage?.inputTokens)) this.#inputTokens += usage.inputTokens
         if (finite(usage?.outputTokens)) this.#outputTokens += usage.outputTokens
         if (finite(usage?.reasoningTokens)) this.#reasoningTokens += usage.reasoningTokens
@@ -116,7 +128,7 @@ export class RunController {
             inputTokens: this.#inputTokens,
             outputTokens: this.#outputTokens,
             reasoningTokens: this.#reasoningTokens,
-            cost: this.#costKnown ? this.#cost : null,
+            cost: this.#hasUsage && this.#costKnown ? this.#cost : null,
             toolFailures: this.#toolFailures,
             elapsedMs: Math.max(0, this.#now() - this.#startedAt),
         }
@@ -161,6 +173,7 @@ export class RunController {
     #costDecision() {
         if (
             this.#policy.maxCost !== null &&
+            this.#hasUsage &&
             this.#costKnown &&
             this.#cost >= this.#policy.maxCost
         ) {
@@ -180,7 +193,8 @@ export class RunController {
     }
 
     #externalDecision(signal) {
-        return signal?.aborted ? this.#stop('cancelled') : null
+        if (!signal?.aborted) return null
+        return this.#stop(signal.reason?.stopReason === 'time_limit' ? 'time_limit' : 'cancelled')
     }
 
     #continue() {
@@ -208,8 +222,16 @@ export function normalizeRunPolicy(policy = {}) {
             normalized[key] = null
             continue
         }
-        if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-            throw new TypeError(`${key} must be null or a non-negative finite number`)
+        if (
+            typeof value !== 'number' ||
+            !Number.isFinite(value) ||
+            value < 0 ||
+            (INTEGER_POLICY_KEYS.has(key) && !Number.isInteger(value))
+        ) {
+            const kind = INTEGER_POLICY_KEYS.has(key)
+                ? 'non-negative integer'
+                : 'non-negative finite number'
+            throw new TypeError(`${key} must be null or a ${kind}`)
         }
         normalized[key] = value
     }

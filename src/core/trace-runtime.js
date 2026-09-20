@@ -1,21 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { STOP_REASONS } from './run-controller.js'
 
-export const STOP_REASONS = Object.freeze([
-    'completed',
-    'cancelled',
-    'step_limit',
-    'tool_call_limit',
-    'time_limit',
-    'input_token_limit',
-    'output_token_limit',
-    'cost_limit',
-    'tool_failure_limit',
-    'context_overflow',
-    'no_progress',
-    'internal_error',
-])
+export { STOP_REASONS }
 
 /**
  * Collects one structured trace for each Agent.send() run.

@@ -64,6 +64,7 @@ test('RunController enforces token, duration, failure, and cost limits', () => {
     assert.equal(failures.recordToolResult({ isError: true }).stopReason, 'tool_failure_limit')
 
     const unknownCost = new RunController({ policy: { maxCost: 0 } })
+    assert.equal(unknownCost.snapshot().cost, null)
     const unknown = unknownCost.recordLlmUsage({ inputTokens: 1 })
     assert.equal(unknown.action, 'continue')
     assert.equal(unknown.state.cost, null)
@@ -156,7 +157,10 @@ test('AgentLoop stops at tool-call budget and completes the Event Log protocol',
         const events = harness.sessions.get(harness.session.id).events
         const results = events.filter((event) => event.type === 'tool/result')
         assert.equal(results.length, 2)
-        assert.equal(results[1].data.outcome, 'unknown')
+        assert.equal(results[1].data.outcome, 'not_executed')
+        assert.equal(results[1].data.skipped, true)
+        assert.equal(results[1].data.recovered, false)
+        assert.equal(results[1].data.skipReason, 'tool_call_limit')
         assert.equal(results[1].data.budgetStop, true)
 
         const files = await fs.readdir(directory)

@@ -218,6 +218,8 @@ test('interrupted tool calls recover as unknown results without automatic retry'
         const recovered = sessions.get(session.id).events.at(-1)
         assert.equal(recovered.type, 'tool/result')
         assert.equal(recovered.data.outcome, 'unknown')
+        assert.equal(recovered.data.recovered, true)
+        assert.equal(recovered.data.skipped, undefined)
         assert.equal(recovered.data.retryable, false)
         assert.match(recovered.data.content, /actual outcome is unknown/i)
 

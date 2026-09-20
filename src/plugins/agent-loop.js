@@ -18,6 +18,7 @@ class AgentLoopService extends Service {
             llm: ctx.llm,
             trace: ctx.reflect.get('traceRuntime', false),
             policy: config.policy,
+            costEstimator: config.costEstimator,
         })
     }
 

@@ -1,5 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import dotenv from 'dotenv'
+import { CostEstimator, pricingFromEnv } from './core/cost-estimator.js'
+import { runPolicyFromEnv } from './core/run-policy-config.js'
 import * as deepseek from './models/deepseek.js'
 import * as agentLoop from './plugins/agent-loop.js'
 import * as agents from './plugins/agents.js'
@@ -31,7 +33,12 @@ await root.plugin(tools)
 await root.plugin(llm)
 await root.plugin(trace)
 await root.plugin(agents)
-await root.plugin(agentLoop)
+await root.plugin(agentLoop, {
+    policy: runPolicyFromEnv(),
+    costEstimator: new CostEstimator({
+        pricing: pricingFromEnv(process.env.MINI_DSH_PRICING_JSON),
+    }),
+})
 
 await root.plugin(runtimeContext, { workspace })
 await root.plugin(sandbox, { workspace })

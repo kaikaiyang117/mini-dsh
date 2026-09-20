@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { RunController } from './run-controller.js'
+import { combineAbortSignals, createRunDeadline } from './run-deadline.js'
 
-const CANCELLED_RESULT = 'ToolError: the run was cancelled before this tool ran'
+const NOT_EXECUTED_RESULT = 'ToolError: the tool was not executed because the run stopped'
 
 /**
  * Runs model/tool execution while delegating all per-run policy decisions to
@@ -15,6 +16,7 @@ export class AgentLoopRuntime {
         llm,
         trace,
         policy = {},
+        costEstimator,
         controllerFactory,
     } = {}) {
         this.sessions = sessions
@@ -23,6 +25,7 @@ export class AgentLoopRuntime {
         this.llm = llm
         this.trace = trace
         this.policy = policy
+        this.costEstimator = costEstimator
         this.controllerFactory = controllerFactory ?? ((options) => new RunController(options))
     }
 
@@ -37,10 +40,13 @@ export class AgentLoopRuntime {
             onToolResult,
             policy = this.policy,
             now,
+            onStop,
         } = {},
     ) {
         const sessionId = agent.sessionId
         const controller = this.controllerFactory({ policy, now })
+        const deadline = createRunDeadline(controller.policy.maxDurationMs)
+        const combinedSignal = combineAbortSignals(signal, deadline.signal)
         const runTrace = this.trace?.startRun({ sessionId, model: agent.model })
         const runId = runTrace?.runId ?? randomUUID()
         let stopReason = 'internal_error'
@@ -51,7 +57,7 @@ export class AgentLoopRuntime {
             let step = 0
 
             while (true) {
-                const stepDecision = controller.beforeStep(signal)
+                const stepDecision = controller.beforeStep(combinedSignal)
                 if (stepDecision.action === 'stop') {
                     return this.#finishDecision(
                         stepDecision,
@@ -81,17 +87,19 @@ export class AgentLoopRuntime {
                                 system,
                                 messages,
                                 tools: this.tools.schemas(),
-                                signal,
+                                signal: combinedSignal,
                                 onReasoning,
                                 onContent,
                             },
                             agent.model,
                         )
                     } finally {
-                        stepTrace?.finishLlm(response?.usage)
+                        const usage = this.#estimateUsage(response?.usage, agent.model)
+                        stepTrace?.finishLlm(usage)
                     }
 
-                    const usageDecision = controller.recordLlmUsage(response?.usage, signal)
+                    const usage = this.#estimateUsage(response?.usage, agent.model)
+                    const usageDecision = controller.recordLlmUsage(usage, combinedSignal)
                     const toolCalls = response.toolCalls ?? []
                     lastContent = response.content ?? lastContent
 
@@ -127,7 +135,7 @@ export class AgentLoopRuntime {
 
                     for (const call of toolCalls) {
                         const toolTrace = stepTrace?.startToolCall(call)
-                        const decision = turnDecision ?? controller.beforeToolCall(signal)
+                        const decision = turnDecision ?? controller.beforeToolCall(combinedSignal)
 
                         if (decision.action === 'stop') {
                             toolTrace?.finish(
@@ -148,7 +156,7 @@ export class AgentLoopRuntime {
 
                         onToolCall?.(call)
                         const result = await this.tools.execute(call.name, call.arguments, {
-                            signal,
+                            signal: combinedSignal,
                             sessionId,
                             toolCallId: call.id,
                             agent,
@@ -172,7 +180,7 @@ export class AgentLoopRuntime {
                             stepId,
                         })
 
-                        const resultDecision = controller.recordToolResult(result, signal)
+                        const resultDecision = controller.recordToolResult(result, combinedSignal)
                         if (resultDecision.action === 'stop') turnDecision = resultDecision
                     }
 
@@ -190,13 +198,20 @@ export class AgentLoopRuntime {
                 }
             }
         } catch (error) {
-            stopReason =
-                signal?.aborted || /cancelled/i.test(error?.message ?? '')
-                    ? 'cancelled'
-                    : 'internal_error'
+            if (signal?.aborted) {
+                stopReason = 'cancelled'
+                throw new Error('Agent run cancelled', { cause: error })
+            }
+            if (deadline.signal?.aborted || combinedSignal?.reason?.stopReason === 'time_limit') {
+                stopReason = 'time_limit'
+                return lastContent
+            }
+            stopReason = /cancelled/i.test(error?.message ?? '') ? 'cancelled' : 'internal_error'
             throw error
         } finally {
+            deadline.dispose()
             await runTrace?.finish(stopReason)
+            await onStop?.({ stopReason, state: controller.snapshot() })
         }
     }
 
@@ -209,21 +224,27 @@ export class AgentLoopRuntime {
     }
 
     async #appendSyntheticToolResult(sessionId, call, runId, stepId, stopReason) {
-        const content =
-            stopReason === 'cancelled'
-                ? CANCELLED_RESULT
-                : `Tool call was not executed because the run stopped (${stopReason}); actual outcome is unknown.`
         await this.sessions.append(sessionId, 'tool/result', {
             toolCallId: call.id,
             name: call.name,
             isError: true,
-            content,
-            outcome: 'unknown',
-            recovered: true,
+            content: `${NOT_EXECUTED_RESULT} (${stopReason})`,
+            outcome: 'not_executed',
+            skipped: true,
+            recovered: false,
+            skipReason: stopReason,
             retryable: false,
             budgetStop: stopReason !== 'cancelled',
             runId,
             stepId,
         })
+    }
+
+    #estimateUsage(usage, model) {
+        if (!this.costEstimator) return usage
+        const slash = String(model ?? '').indexOf('/')
+        const provider = slash > 0 ? String(model).slice(0, slash) : undefined
+        const modelName = slash > 0 ? String(model).slice(slash + 1) : model
+        return this.costEstimator.estimate(usage ?? {}, { provider, model: modelName })
     }
 }

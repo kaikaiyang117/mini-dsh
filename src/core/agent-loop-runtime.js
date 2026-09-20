@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { RunController } from './run-controller.js'
 import { combineAbortSignals, createRunDeadline } from './run-deadline.js'
+import { ToolScheduler } from './tool-scheduler.js'
 
 const NOT_EXECUTED_RESULT = 'ToolError: the tool was not executed because the run stopped'
 
@@ -18,6 +19,8 @@ export class AgentLoopRuntime {
         policy = {},
         costEstimator,
         controllerFactory,
+        scheduler,
+        maxParallelToolCalls,
     } = {}) {
         this.sessions = sessions
         this.systemPrompt = systemPrompt
@@ -27,6 +30,12 @@ export class AgentLoopRuntime {
         this.policy = policy
         this.costEstimator = costEstimator
         this.controllerFactory = controllerFactory ?? ((options) => new RunController(options))
+        this.scheduler =
+            scheduler ??
+            new ToolScheduler({
+                tools,
+                maxParallelToolCalls,
+            })
     }
 
     async run(
@@ -131,48 +140,99 @@ export class AgentLoopRuntime {
                         stepId,
                     })
 
-                    let turnDecision = usageDecision.action === 'stop' ? usageDecision : null
+                    const batchController = new AbortController()
+                    const toolSignal = combineAbortSignals(combinedSignal, batchController.signal)
+                    let turnDecision = null
+                    const stopBatch = (decision) => {
+                        if (
+                            !turnDecision ||
+                            decision.stopReason === 'cancelled' ||
+                            decision.stopReason === 'time_limit'
+                        ) {
+                            turnDecision = decision
+                        }
+                        if (!batchController.signal.aborted) {
+                            batchController.abort({ stopReason: turnDecision.stopReason })
+                        }
+                    }
 
-                    for (const call of toolCalls) {
-                        const toolTrace = stepTrace?.startToolCall(call)
-                        const decision = turnDecision ?? controller.beforeToolCall(combinedSignal)
+                    if (usageDecision.action === 'stop') stopBatch(usageDecision)
 
-                        if (decision.action === 'stop') {
-                            toolTrace?.finish(
-                                decision.stopReason === 'cancelled'
-                                    ? 'cancelled'
-                                    : 'budget_exhausted',
-                            )
+                    const records = await this.scheduler.execute(toolCalls, {
+                        signal: toolSignal,
+                        run: async (call, { index, signal: executionSignal }) => {
+                            if (combinedSignal?.aborted) {
+                                const decision = controller.beforeToolCall(combinedSignal)
+                                stopBatch(decision)
+                                return notStartedRecord(index, call, decision.stopReason)
+                            }
+                            if (turnDecision) {
+                                return notStartedRecord(index, call, turnDecision.stopReason)
+                            }
+
+                            const decision = controller.beforeToolCall(combinedSignal)
+                            if (decision.action === 'stop') {
+                                stopBatch(decision)
+                                return notStartedRecord(index, call, decision.stopReason)
+                            }
+
+                            const toolTrace = stepTrace?.startToolCall(call)
+                            onToolCall?.(call)
+                            const result = await this.tools.execute(call.name, call.arguments, {
+                                signal: executionSignal,
+                                sessionId,
+                                runId,
+                                stepId,
+                                toolCallId: call.id,
+                                agent,
+                            })
+                            toolTrace?.finish(toolTraceStatus(result))
+
+                            if (!turnDecision) {
+                                const resultDecision = controller.recordToolResult(
+                                    result,
+                                    combinedSignal,
+                                )
+                                if (resultDecision.action === 'stop') stopBatch(resultDecision)
+                            }
+
+                            return {
+                                index,
+                                call,
+                                state: 'settled',
+                                result,
+                                renderedContent: this.tools.renderResult(result),
+                            }
+                        },
+                    })
+
+                    if (combinedSignal?.aborted) {
+                        stopBatch(controller.beforeToolCall(combinedSignal))
+                    }
+
+                    for (const [index, call] of toolCalls.entries()) {
+                        const record = records[index]
+                        if (record.state === 'not_started') {
+                            const reason =
+                                record.stopReason ?? turnDecision?.stopReason ?? 'cancelled'
+                            stepTrace?.skipToolCall(call, skippedTraceStatus(reason))
                             await this.#appendSyntheticToolResult(
                                 sessionId,
                                 call,
                                 runId,
                                 stepId,
-                                decision.stopReason,
+                                reason,
                             )
-                            turnDecision = decision
                             continue
                         }
 
-                        onToolCall?.(call)
-                        const result = await this.tools.execute(call.name, call.arguments, {
-                            signal: combinedSignal,
-                            sessionId,
-                            runId,
-                            stepId,
-                            toolCallId: call.id,
-                            agent,
-                        })
-                        toolTrace?.finish(toolTraceStatus(result))
-
-                        const renderedContent = this.tools.renderResult(result)
+                        const { result, renderedContent } = record
                         onToolResult?.({
                             ...result,
                             renderedContent,
                             name: call.name,
                             toolCallId: call.id,
                         })
-
                         await this.sessions.append(sessionId, 'tool/result', {
                             toolCallId: call.id,
                             name: call.name,
@@ -182,9 +242,10 @@ export class AgentLoopRuntime {
                             runId,
                             stepId,
                         })
+                    }
 
-                        const resultDecision = controller.recordToolResult(result, combinedSignal)
-                        if (resultDecision.action === 'stop') turnDecision = resultDecision
+                    if (combinedSignal?.aborted) {
+                        stopBatch(controller.beforeToolCall(combinedSignal))
                     }
 
                     if (turnDecision) {
@@ -241,7 +302,8 @@ export class AgentLoopRuntime {
             toolCallId: call.id,
             name: call.name,
             isError: true,
-            errorCode: stopReason === 'cancelled' ? 'cancelled' : null,
+            errorCode:
+                stopReason === 'cancelled' || stopReason === 'time_limit' ? 'cancelled' : null,
             content: `${NOT_EXECUTED_RESULT} (${stopReason})`,
             outcome: 'not_executed',
             skipped: true,
@@ -268,4 +330,19 @@ function toolTraceStatus(result) {
     if (result.errorCode === 'timeout') return 'timeout'
     if (result.errorCode === 'cancelled') return 'cancelled'
     return 'error'
+}
+
+function notStartedRecord(index, call, stopReason) {
+    return {
+        index,
+        call,
+        state: 'not_started',
+        stopReason,
+    }
+}
+
+function skippedTraceStatus(stopReason) {
+    return stopReason === 'cancelled' || stopReason === 'time_limit'
+        ? 'cancelled'
+        : 'budget_exhausted'
 }

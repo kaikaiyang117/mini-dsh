@@ -19,6 +19,7 @@ class AgentLoopService extends Service {
             trace: ctx.reflect.get('traceRuntime', false),
             policy: config.policy,
             costEstimator: config.costEstimator,
+            maxParallelToolCalls: config.maxParallelToolCalls,
         })
     }
 

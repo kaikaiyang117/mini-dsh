@@ -99,6 +99,7 @@ export class TraceRuntime {
                 addUsage(trace.usage, usage)
             },
             startToolCall: (call) => this.#startToolCall(step, call),
+            skipToolCall: (call, status) => this.#skipToolCall(step, call, status),
             finish: () => {
                 if (stepFinished) return
                 stepFinished = true
@@ -132,6 +133,17 @@ export class TraceRuntime {
                 toolCall.durationMs = Math.max(0, endedAtMs - startedAtMs)
             },
         }
+    }
+
+    #skipToolCall(step, call, status) {
+        step.toolCalls.push({
+            toolCallId: call.id,
+            name: call.name,
+            startedAt: null,
+            endedAt: null,
+            durationMs: null,
+            status,
+        })
     }
 
     async #persist(trace) {

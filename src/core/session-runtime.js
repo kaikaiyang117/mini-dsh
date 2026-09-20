@@ -192,6 +192,7 @@ export class SessionRuntime {
                 toolCallId: call.id,
                 name: call.name,
                 isError: true,
+                errorCode: null,
                 content: INTERRUPTED_TOOL_MESSAGE,
                 outcome: 'unknown',
                 recovered: true,

@@ -161,7 +161,7 @@ export class AgentLoopRuntime {
                             toolCallId: call.id,
                             agent,
                         })
-                        toolTrace?.finish(result.isError ? 'error' : 'completed')
+                        toolTrace?.finish(toolTraceStatus(result))
 
                         const renderedContent = this.tools.renderResult(result)
                         onToolResult?.({
@@ -175,6 +175,7 @@ export class AgentLoopRuntime {
                             toolCallId: call.id,
                             name: call.name,
                             isError: result.isError,
+                            errorCode: result.errorCode,
                             content: renderedContent,
                             runId,
                             stepId,
@@ -238,6 +239,7 @@ export class AgentLoopRuntime {
             toolCallId: call.id,
             name: call.name,
             isError: true,
+            errorCode: stopReason === 'cancelled' ? 'cancelled' : null,
             content: `${NOT_EXECUTED_RESULT} (${stopReason})`,
             outcome: 'not_executed',
             skipped: true,
@@ -257,4 +259,11 @@ export class AgentLoopRuntime {
         const modelName = slash > 0 ? String(model).slice(slash + 1) : model
         return this.costEstimator.estimate(usage ?? {}, { provider, model: modelName })
     }
+}
+
+function toolTraceStatus(result) {
+    if (!result.isError) return 'completed'
+    if (result.errorCode === 'timeout') return 'timeout'
+    if (result.errorCode === 'cancelled') return 'cancelled'
+    return 'error'
 }

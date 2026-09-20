@@ -14,6 +14,10 @@ export function apply(ctx) {
         description:
             'Read a text file inside the workspace. The path must stay inside the workspace.',
         parameters: objectSchema({ path: { type: 'string' } }, ['path']),
+        readOnly: true,
+        idempotent: true,
+        concurrencySafe: true,
+        sideEffect: false,
         execute: async ({ path: input }) => fs.readFile(ctx.sandbox.resolvePath(input), 'utf8'),
     })
 
@@ -25,6 +29,10 @@ export function apply(ctx) {
             'path',
             'content',
         ]),
+        readOnly: false,
+        idempotent: false,
+        concurrencySafe: false,
+        sideEffect: true,
         execute: async ({ path: input, content }) => {
             const target = ctx.sandbox.resolvePath(input)
             const rel = path.relative(workspace, target)
@@ -52,6 +60,10 @@ export function apply(ctx) {
             },
             ['path', 'oldText', 'newText'],
         ),
+        readOnly: false,
+        idempotent: false,
+        concurrencySafe: false,
+        sideEffect: true,
         execute: async ({ path: input, oldText, newText }) => {
             const target = ctx.sandbox.resolvePath(input)
             const rel = path.relative(workspace, target)
@@ -79,6 +91,10 @@ export function apply(ctx) {
         parameters: objectSchema({ pattern: { type: 'string' }, limit: { type: 'integer' } }, [
             'pattern',
         ]),
+        readOnly: true,
+        idempotent: true,
+        concurrencySafe: true,
+        sideEffect: false,
         execute: async ({ pattern, limit = 100 }) => {
             const files = await walk(workspace, Math.min(Math.max(limit, 1), 500))
             return files.filter((file) => matchFilePattern(file, pattern)).slice(0, limit)
@@ -91,6 +107,10 @@ export function apply(ctx) {
         parameters: objectSchema({ query: { type: 'string' }, limit: { type: 'integer' } }, [
             'query',
         ]),
+        readOnly: true,
+        idempotent: true,
+        concurrencySafe: true,
+        sideEffect: false,
         execute: async ({ query, limit = 50 }) =>
             grep(workspace, query, Math.min(Math.max(limit, 1), 200)),
     })

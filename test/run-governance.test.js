@@ -180,6 +180,12 @@ test('run deadline aborts a slow tool and passes the combined signal', async () 
     assert.equal(await agent.send('slow', { onStop: (decision) => (stop = decision) }), '')
     assert.equal(aborted, true)
     assert.equal(stop.stopReason, 'time_limit')
+    assert.equal(
+        harness.sessions
+            .get(harness.session.id)
+            .events.find((event) => event.type === 'tool/result').data.errorCode,
+        'cancelled',
+    )
 })
 
 test('external abort remains cancelled even with a run deadline', async () => {

@@ -123,6 +123,19 @@ test('the whole plugin stack boots on Cordis and runs a full model -> tool -> mo
             'read_file',
             'write_file',
         ])
+        const metadata = new Map(root.tools.list().map((tool) => [tool.name, tool]))
+        for (const name of ['read_file', 'glob', 'grep']) {
+            assert.equal(metadata.get(name).readOnly, true)
+            assert.equal(metadata.get(name).idempotent, true)
+            assert.equal(metadata.get(name).concurrencySafe, true)
+            assert.equal(metadata.get(name).sideEffect, false)
+        }
+        for (const name of ['write_file', 'edit_file', 'bash']) {
+            assert.equal(metadata.get(name).readOnly, false)
+            assert.equal(metadata.get(name).idempotent, false)
+            assert.equal(metadata.get(name).concurrencySafe, false)
+            assert.equal(metadata.get(name).sideEffect, true)
+        }
 
         const prompt = await root.systemPrompt.assemble({ step: 0 })
         assert.match(prompt, /You are a general-purpose agent/)

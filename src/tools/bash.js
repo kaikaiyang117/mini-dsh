@@ -22,6 +22,11 @@ export function apply(ctx, config = {}) {
                     },
                     required: ['command'],
                 },
+                timeoutMs,
+                readOnly: false,
+                idempotent: false,
+                concurrencySafe: false,
+                sideEffect: true,
                 output: {
                     schema: { type: 'object' },
                     render(_args, value) {
@@ -40,7 +45,6 @@ export function apply(ctx, config = {}) {
                     })
                     return runBash(command, {
                         workspace,
-                        timeoutMs,
                         maxOutput,
                         signal: exec.signal,
                     })
@@ -50,7 +54,7 @@ export function apply(ctx, config = {}) {
     )
 }
 
-function runBash(command, { workspace, timeoutMs, maxOutput, signal }) {
+function runBash(command, { workspace, maxOutput, signal }) {
     return new Promise((resolve, reject) => {
         const started = Date.now()
         const child = spawn('bash', ['-lc', command], {
@@ -61,7 +65,7 @@ function runBash(command, { workspace, timeoutMs, maxOutput, signal }) {
 
         let stdout = ''
         let stderr = ''
-        let killedByTimeout = false
+        let killTimer = null
 
         const append = (current, chunk) => (current + chunk.toString()).slice(-maxOutput)
         child.stdout.on('data', (chunk) => {
@@ -71,30 +75,27 @@ function runBash(command, { workspace, timeoutMs, maxOutput, signal }) {
             stderr = append(stderr, chunk)
         })
 
-        const timer = setTimeout(() => {
-            killedByTimeout = true
+        const onAbort = () => {
             child.kill('SIGTERM')
-            setTimeout(() => child.kill('SIGKILL'), 1000).unref()
-        }, timeoutMs)
-
-        const onAbort = () => child.kill('SIGTERM')
-        signal?.addEventListener('abort', onAbort, { once: true })
+            killTimer = setTimeout(() => child.kill('SIGKILL'), 1000)
+        }
+        if (signal?.aborted) onAbort()
+        else signal?.addEventListener('abort', onAbort, { once: true })
 
         child.on('error', (error) => {
-            clearTimeout(timer)
+            clearTimeout(killTimer)
             signal?.removeEventListener('abort', onAbort)
             reject(error)
         })
 
         child.on('close', (code, sig) => {
-            clearTimeout(timer)
+            clearTimeout(killTimer)
             signal?.removeEventListener('abort', onAbort)
             resolve({
                 command,
                 cwd: workspace,
                 exitCode: code,
                 signal: sig,
-                timedOut: killedByTimeout,
                 durationMs: Date.now() - started,
                 stdout,
                 stderr,

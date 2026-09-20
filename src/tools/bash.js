@@ -6,6 +6,7 @@ export const inject = ['tools', 'sandbox']
 export function apply(ctx, config = {}) {
     const workspace = ctx.sandbox.workspace
     const timeoutMs = Number(config.timeoutMs ?? 30_000)
+    const killGraceMs = Number(config.killGraceMs ?? 1_000)
     const maxOutput = Number(config.maxOutput ?? 32_000)
 
     ctx.effect(
@@ -45,6 +46,7 @@ export function apply(ctx, config = {}) {
                     })
                     return runBash(command, {
                         workspace,
+                        killGraceMs,
                         maxOutput,
                         signal: exec.signal,
                     })
@@ -54,7 +56,7 @@ export function apply(ctx, config = {}) {
     )
 }
 
-function runBash(command, { workspace, maxOutput, signal }) {
+function runBash(command, { workspace, killGraceMs, maxOutput, signal }) {
     return new Promise((resolve, reject) => {
         const started = Date.now()
         const child = spawn('bash', ['-lc', command], {
@@ -77,7 +79,7 @@ function runBash(command, { workspace, maxOutput, signal }) {
 
         const onAbort = () => {
             child.kill('SIGTERM')
-            killTimer = setTimeout(() => child.kill('SIGKILL'), 1000)
+            killTimer = setTimeout(() => child.kill('SIGKILL'), killGraceMs)
         }
         if (signal?.aborted) onAbort()
         else signal?.addEventListener('abort', onAbort, { once: true })

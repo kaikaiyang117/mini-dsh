@@ -203,7 +203,7 @@ test('Cancelled multi-tool run records cancelled stop reason and every tool stat
         assert.deepEqual(
             run.steps[0].toolCalls.map((call) => [call.toolCallId, call.status]),
             [
-                ['tool-1', 'completed'],
+                ['tool-1', 'cancelled'],
                 ['tool-2', 'cancelled'],
             ],
         )

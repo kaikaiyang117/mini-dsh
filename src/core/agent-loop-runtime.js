@@ -158,6 +158,8 @@ export class AgentLoopRuntime {
                         const result = await this.tools.execute(call.name, call.arguments, {
                             signal: combinedSignal,
                             sessionId,
+                            runId,
+                            stepId,
                             toolCallId: call.id,
                             agent,
                         })

@@ -36,6 +36,10 @@ function blocksToText(blocks) {
  * Tool definitions are normalized and their JSON Schema validators are
  * compiled once at registration. Execution always returns a stable result;
  * validation, timeout, cancellation, and tool failures are data outcomes.
+ *
+ * Timeout and parent cancellation are cooperative: the runtime aborts the
+ * execution signal and waits for tool.execute() to settle after cleanup.
+ * Forced preemption requires process/worker isolation and is outside V2.
  */
 export class ToolRuntime {
     #tools = new Map()
@@ -130,17 +134,20 @@ export class ToolRuntime {
         const execution = {
             signal: signal ?? new AbortController().signal,
             sessionId: exec.sessionId,
+            runId: exec.runId,
+            stepId: exec.stepId,
             toolCallId: exec.toolCallId,
             agent: exec.agent,
         }
 
         try {
-            // Parent cancellation is delivered through execution.signal. The
-            // tool may finish a synchronous side effect after requesting
-            // parent cancellation; only the Tool Runtime timeout races the
-            // promise itself. A parent abort is still classified as
-            // cancelled when the tool rejects or observes the signal.
-            const value = await abortable(definition.execute(args, execution), timeout.signal)
+            // Cancellation is cooperative: abort the execution signal, then
+            // wait for the tool to finish cleanup and settle before returning.
+            const value = await definition.execute(args, execution)
+            const cancellation = cancellationCode(signal)
+            if (cancellation) {
+                return cancellationResult(cancellation, this.#now() - startedAt)
+            }
             const content = definition.output?.render
                 ? await definition.output.render(args, value)
                 : [{ type: 'text', text: toText(value) }]
@@ -156,9 +163,13 @@ export class ToolRuntime {
                 const finalized = await definition.finalizeContent(execution, result)
                 if (finalized !== undefined) result = { ...result, content: finalized }
             }
-            return result
+            const finalCancellation = cancellationCode(signal)
+            if (finalCancellation) {
+                return cancellationResult(finalCancellation, this.#now() - startedAt)
+            }
+            return { ...result, metadata: metadata(this.#now() - startedAt) }
         } catch (error) {
-            const errorCode = classifyAbort(error, parentSignal, timeout.signal)
+            const errorCode = classifyError(error, signal)
             const isCancelled = errorCode === ERROR_CODES.CANCELLED
             const isTimeout = errorCode === ERROR_CODES.TIMEOUT
             return errorResult(
@@ -181,6 +192,21 @@ export class ToolRuntime {
 }
 
 function normalizeDefinition(definition) {
+    for (const key of ['readOnly', 'idempotent', 'concurrencySafe', 'sideEffect']) {
+        if (Object.hasOwn(definition, key) && typeof definition[key] !== 'boolean') {
+            throw new TypeError(`tool.${key} must be a boolean`)
+        }
+    }
+    if (
+        Object.hasOwn(definition, 'timeoutMs') &&
+        definition.timeoutMs !== null &&
+        (typeof definition.timeoutMs !== 'number' ||
+            !Number.isFinite(definition.timeoutMs) ||
+            definition.timeoutMs < 0)
+    ) {
+        throw new TypeError('tool.timeoutMs must be null or a non-negative finite number')
+    }
+
     const metadata = {
         ...DEFAULT_METADATA,
         timeoutMs: definition.timeoutMs ?? DEFAULT_METADATA.timeoutMs,
@@ -189,15 +215,6 @@ function normalizeDefinition(definition) {
         concurrencySafe: definition.concurrencySafe ?? DEFAULT_METADATA.concurrencySafe,
         sideEffect: definition.sideEffect ?? DEFAULT_METADATA.sideEffect,
     }
-    if (
-        metadata.timeoutMs !== null &&
-        (typeof metadata.timeoutMs !== 'number' ||
-            !Number.isFinite(metadata.timeoutMs) ||
-            metadata.timeoutMs < 0)
-    ) {
-        throw new TypeError('tool.timeoutMs must be null or a non-negative finite number')
-    }
-
     return {
         ...definition,
         ...metadata,
@@ -224,6 +241,26 @@ function errorResult(value, content, errorCode, resultMetadata) {
     }
 }
 
+function cancellationResult(errorCode, durationMs) {
+    const isTimeout = errorCode === ERROR_CODES.TIMEOUT
+    return errorResult(
+        null,
+        [
+            {
+                type: 'text',
+                text: isTimeout
+                    ? 'ToolError: tool execution timed out'
+                    : 'ToolError: tool cancelled',
+            },
+        ],
+        errorCode,
+        metadata(durationMs, {
+            timeout: isTimeout,
+            cancelled: !isTimeout,
+        }),
+    )
+}
+
 function formatValidationError(errors = []) {
     return errors
         .map((error) => `${error.instancePath || '/'} ${error.message ?? 'is invalid'}`)
@@ -248,41 +285,16 @@ function combineSignals(parentSignal, timeoutSignal) {
     return AbortSignal.any([parentSignal, timeoutSignal])
 }
 
-function abortable(value, signal) {
-    const promise = Promise.resolve(value)
-    if (!signal) return promise
-    if (signal.aborted) return Promise.reject(signal.reason ?? new Error('aborted'))
-
-    return new Promise((resolve, reject) => {
-        let settled = false
-        const cleanup = () => signal.removeEventListener('abort', onAbort)
-        const onAbort = () => {
-            if (settled) return
-            settled = true
-            cleanup()
-            reject(signal.reason ?? new Error('aborted'))
-        }
-        signal.addEventListener('abort', onAbort, { once: true })
-        promise.then(
-            (result) => {
-                if (settled) return
-                settled = true
-                cleanup()
-                resolve(result)
-            },
-            (error) => {
-                if (settled) return
-                settled = true
-                cleanup()
-                reject(error)
-            },
-        )
-    })
+function cancellationCode(signal) {
+    if (!signal?.aborted) return null
+    return signal.reason?.errorCode === ERROR_CODES.TIMEOUT
+        ? ERROR_CODES.TIMEOUT
+        : ERROR_CODES.CANCELLED
 }
 
-function classifyAbort(error, parentSignal, timeoutSignal) {
-    if (parentSignal?.aborted) return ERROR_CODES.CANCELLED
-    if (timeoutSignal?.aborted) return ERROR_CODES.TIMEOUT
+function classifyError(error, signal) {
+    const cancellation = cancellationCode(signal)
+    if (cancellation) return cancellation
     if (error?.errorCode === ERROR_CODES.TIMEOUT) return ERROR_CODES.TIMEOUT
     if (error?.name === 'AbortError') return ERROR_CODES.CANCELLED
     return ERROR_CODES.EXECUTION_ERROR

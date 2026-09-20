@@ -121,6 +121,16 @@ export class RunController {
         return this.#limitDecision()
     }
 
+    recordContextPressure(pressure, signal) {
+        const external = this.#externalDecision(signal)
+        if (external) return external
+
+        const duration = this.#durationDecision()
+        if (duration) return duration
+
+        return pressure?.state === 'hard_limit' ? this.#stop('context_overflow') : this.#continue()
+    }
+
     snapshot() {
         return {
             steps: this.#steps,

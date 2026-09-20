@@ -172,13 +172,14 @@ test('AgentLoop obtains model messages exclusively through the injected ContextM
     }
     let projected
     const contextManager = {
-        project(sessionId, context) {
+        prepare(sessionId, context) {
             projected = { sessionId, context }
             return {
                 messages: [{ role: 'user', content: 'projected context' }],
                 metadata: {
                     sourceEventCount: sessions.get(sessionId).events.length,
                     projectedMessageCount: 1,
+                    pressure: { state: 'normal' },
                     compacted: false,
                 },
             }

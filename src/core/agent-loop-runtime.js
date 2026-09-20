@@ -93,7 +93,7 @@ export class AgentLoopRuntime {
                         step,
                     })
                     const toolSchemas = this.tools.schemas()
-                    const { messages } = await this.contextManager.project(sessionId, {
+                    const preparedContext = await this.contextManager.prepare(sessionId, {
                         agent,
                         runId,
                         stepId,
@@ -102,6 +102,20 @@ export class AgentLoopRuntime {
                         system,
                         tools: toolSchemas,
                     })
+                    const contextDecision = controller.recordContextPressure(
+                        preparedContext.metadata.pressure,
+                        combinedSignal,
+                    )
+                    if (contextDecision.action === 'stop') {
+                        return this.#finishDecision(
+                            contextDecision,
+                            (reason) => {
+                                stopReason = reason
+                            },
+                            lastContent,
+                        )
+                    }
+                    const { messages } = preparedContext
 
                     let response
                     stepTrace?.startLlm()

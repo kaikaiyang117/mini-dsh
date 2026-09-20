@@ -98,6 +98,16 @@ test('external cancellation has priority over other decisions', () => {
     assert.equal(controller.beforeToolCall(abort.signal).stopReason, 'cancelled')
 })
 
+test('RunController maps final hard context pressure to context_overflow', () => {
+    const controller = new RunController()
+
+    assert.equal(controller.recordContextPressure({ state: 'normal' }).action, 'continue')
+    assert.equal(
+        controller.recordContextPressure({ state: 'hard_limit' }).stopReason,
+        'context_overflow',
+    )
+})
+
 async function createHarness({ policy, trace, now } = {}) {
     const sessions = new SessionRuntime()
     const systemPrompt = new SystemPromptRuntime()

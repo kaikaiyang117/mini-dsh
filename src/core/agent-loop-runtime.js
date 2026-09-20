@@ -1,54 +1,76 @@
 import { randomUUID } from 'node:crypto'
+import { RunController } from './run-controller.js'
 
 const CANCELLED_RESULT = 'ToolError: the run was cancelled before this tool ran'
 
 /**
- * Runs the model → tool → model loop against a session.
- *
- * Session events are the source of truth: user input, tool calls, and
- * results are appended to the log, then projected into LLM messages on
- * each step. There is no hard step cap — the loop ends when the model
- * returns no tool calls, or when the abort signal fires.
+ * Runs model/tool execution while delegating all per-run policy decisions to
+ * RunController. Session events remain the source of truth.
  */
 export class AgentLoopRuntime {
-    constructor({ sessions, systemPrompt, tools, llm, trace }) {
+    constructor({
+        sessions,
+        systemPrompt,
+        tools,
+        llm,
+        trace,
+        policy = {},
+        controllerFactory,
+    } = {}) {
         this.sessions = sessions
         this.systemPrompt = systemPrompt
         this.tools = tools
         this.llm = llm
         this.trace = trace
+        this.policy = policy
+        this.controllerFactory = controllerFactory ?? ((options) => new RunController(options))
     }
 
-    async run(agent, input, { signal, onReasoning, onContent, onToolCall, onToolResult } = {}) {
+    async run(
+        agent,
+        input,
+        {
+            signal,
+            onReasoning,
+            onContent,
+            onToolCall,
+            onToolResult,
+            policy = this.policy,
+            now,
+        } = {},
+    ) {
         const sessionId = agent.sessionId
+        const controller = this.controllerFactory({ policy, now })
         const runTrace = this.trace?.startRun({ sessionId, model: agent.model })
         const runId = runTrace?.runId ?? randomUUID()
         let stopReason = 'internal_error'
+        let lastContent = ''
 
         try {
-            // Session events are the source of truth; user input goes into the log first.
             await this.sessions.append(sessionId, 'user/message', { content: input, runId })
-
             let step = 0
 
             while (true) {
-                step += 1
-
-                if (signal?.aborted) {
-                    throw new Error('Agent run cancelled')
+                const stepDecision = controller.beforeStep(signal)
+                if (stepDecision.action === 'stop') {
+                    return this.#finishDecision(
+                        stepDecision,
+                        (reason) => {
+                            stopReason = reason
+                        },
+                        lastContent,
+                    )
                 }
 
+                step = stepDecision.state.steps
                 const stepTrace = runTrace?.startStep()
                 const stepId = stepTrace?.stepId ?? randomUUID()
                 try {
-                    // Reassemble the system prompt every step so dynamic bits (time, cwd) stay fresh.
                     const system = await this.systemPrompt.assemble({
                         agent,
                         sessionId,
                         step,
                     })
-
-                    // LLM messages are a projection of the session log, not a separate store.
                     const messages = this.sessions.deriveMessages(sessionId)
 
                     let response
@@ -69,9 +91,10 @@ export class AgentLoopRuntime {
                         stepTrace?.finishLlm(response?.usage)
                     }
 
+                    const usageDecision = controller.recordLlmUsage(response?.usage, signal)
                     const toolCalls = response.toolCalls ?? []
+                    lastContent = response.content ?? lastContent
 
-                    // No tool calls means the model considers the task done.
                     if (toolCalls.length === 0) {
                         const content = response.content ?? ''
                         await this.sessions.append(sessionId, 'assistant/message', {
@@ -79,12 +102,19 @@ export class AgentLoopRuntime {
                             runId,
                             stepId,
                         })
+                        if (usageDecision.action === 'stop') {
+                            return this.#finishDecision(
+                                usageDecision,
+                                (reason) => {
+                                    stopReason = reason
+                                },
+                                content,
+                            )
+                        }
                         stopReason = 'completed'
                         return content
                     }
 
-                    // Keep reasoning_content on the same assistant/tool_calls event so later
-                    // requests can send DeepSeek thinking back with this turn.
                     await this.sessions.append(sessionId, 'assistant/tool_calls', {
                         content: response.content ?? null,
                         reasoningContent: response.reasoningContent,
@@ -93,48 +123,37 @@ export class AgentLoopRuntime {
                         stepId,
                     })
 
-                    // A single model turn may request several tools; run them all before the next turn.
-                    //
-                    // Cancelling must not abandon a tool_call halfway: deriveMessages() would
-                    // then project an assistant tool_calls message whose ids have no matching
-                    // tool reply, which Chat Completions rejects — one cancelled turn would
-                    // poison every later turn in the session. So a cancelled run still records
-                    // a result for every remaining call, and only throws once the log is
-                    // consistent again.
-                    let cancelled = false
+                    let turnDecision = usageDecision.action === 'stop' ? usageDecision : null
 
                     for (const call of toolCalls) {
                         const toolTrace = stepTrace?.startToolCall(call)
-                        cancelled ||= Boolean(signal?.aborted)
+                        const decision = turnDecision ?? controller.beforeToolCall(signal)
 
-                        if (cancelled) {
-                            toolTrace?.finish('cancelled')
-                            await this.sessions.append(sessionId, 'tool/result', {
-                                toolCallId: call.id,
-                                name: call.name,
-                                isError: true,
-                                content: CANCELLED_RESULT,
+                        if (decision.action === 'stop') {
+                            toolTrace?.finish(
+                                decision.stopReason === 'cancelled'
+                                    ? 'cancelled'
+                                    : 'budget_exhausted',
+                            )
+                            await this.#appendSyntheticToolResult(
+                                sessionId,
+                                call,
                                 runId,
                                 stepId,
-                            })
+                                decision.stopReason,
+                            )
+                            turnDecision = decision
                             continue
                         }
 
                         onToolCall?.(call)
-
-                        let result
-                        try {
-                            result = await this.tools.execute(call.name, call.arguments, {
-                                signal,
-                                sessionId,
-                                toolCallId: call.id,
-                                agent,
-                            })
-                            toolTrace?.finish(result.isError ? 'error' : 'completed')
-                        } catch (error) {
-                            toolTrace?.finish('error')
-                            throw error
-                        }
+                        const result = await this.tools.execute(call.name, call.arguments, {
+                            signal,
+                            sessionId,
+                            toolCallId: call.id,
+                            agent,
+                        })
+                        toolTrace?.finish(result.isError ? 'error' : 'completed')
 
                         const renderedContent = this.tools.renderResult(result)
                         onToolResult?.({
@@ -152,10 +171,19 @@ export class AgentLoopRuntime {
                             runId,
                             stepId,
                         })
+
+                        const resultDecision = controller.recordToolResult(result, signal)
+                        if (resultDecision.action === 'stop') turnDecision = resultDecision
                     }
 
-                    if (cancelled) {
-                        throw new Error('Agent run cancelled')
+                    if (turnDecision) {
+                        return this.#finishDecision(
+                            turnDecision,
+                            (reason) => {
+                                stopReason = reason
+                            },
+                            lastContent,
+                        )
                     }
                 } finally {
                     stepTrace?.finish()
@@ -170,5 +198,32 @@ export class AgentLoopRuntime {
         } finally {
             await runTrace?.finish(stopReason)
         }
+    }
+
+    #finishDecision(decision, setStopReason, content) {
+        setStopReason(decision.stopReason)
+        if (decision.stopReason === 'cancelled') {
+            throw new Error('Agent run cancelled')
+        }
+        return content
+    }
+
+    async #appendSyntheticToolResult(sessionId, call, runId, stepId, stopReason) {
+        const content =
+            stopReason === 'cancelled'
+                ? CANCELLED_RESULT
+                : `Tool call was not executed because the run stopped (${stopReason}); actual outcome is unknown.`
+        await this.sessions.append(sessionId, 'tool/result', {
+            toolCallId: call.id,
+            name: call.name,
+            isError: true,
+            content,
+            outcome: 'unknown',
+            recovered: true,
+            retryable: false,
+            budgetStop: stopReason !== 'cancelled',
+            runId,
+            stepId,
+        })
     }
 }

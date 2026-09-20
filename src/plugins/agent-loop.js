@@ -9,7 +9,7 @@ import { AgentLoopRuntime } from '../core/agent-loop-runtime.js'
 class AgentLoopService extends Service {
     static inject = ['sessions', 'systemPrompt', 'tools', 'llm']
 
-    constructor(ctx) {
+    constructor(ctx, config = {}) {
         super(ctx, 'agentLoop')
         this.runtime = new AgentLoopRuntime({
             sessions: ctx.sessions,
@@ -17,6 +17,7 @@ class AgentLoopService extends Service {
             tools: ctx.tools,
             llm: ctx.llm,
             trace: ctx.reflect.get('traceRuntime', false),
+            policy: config.policy,
         })
     }
 
@@ -28,6 +29,12 @@ class AgentLoopService extends Service {
 export const name = 'mini-agent-loop'
 export const inject = ['sessions', 'systemPrompt', 'tools', 'llm']
 
-export function apply(ctx) {
-    ctx.plugin(AgentLoopService)
+export function apply(ctx, config = {}) {
+    ctx.plugin(
+        class ConfiguredAgentLoopService extends AgentLoopService {
+            constructor(serviceContext) {
+                super(serviceContext, config)
+            }
+        },
+    )
 }

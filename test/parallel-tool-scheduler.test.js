@@ -328,20 +328,20 @@ test('tool-call budget admission never starts excess calls and still completes t
         maxParallelToolCalls: 4,
         policy: { maxToolCalls: 2 },
     })
-    let executions = 0
+    const executions = []
     harness.tools.register({
         name: 'budget-safe',
         concurrencySafe: true,
-        async execute(_args, { signal }) {
-            executions += 1
-            await waitForAbort(signal)
-            return 'cancelled admission batch'
+        async execute({ id }) {
+            executions.push(id)
+            await delay(10)
+            return `completed-${id}`
         },
     })
     registerTurn(
         harness.llm,
         'budget',
-        Array.from({ length: 5 }, (_, index) => call(`budget-${index}`, 'budget-safe')),
+        ['A', 'B', 'C', 'D'].map((id) => call(`budget-${id}`, 'budget-safe', { id })),
     )
     let stopped
 
@@ -353,19 +353,105 @@ test('tool-call budget admission never starts excess calls and still completes t
         }),
         '',
     )
-    assert.equal(executions, 2)
+    assert.deepEqual(executions, ['A', 'B'])
     assert.equal(stopped.stopReason, 'tool_call_limit')
     assert.equal(stopped.state.toolCalls, 2)
     const results = toolResults(harness)
-    assert.equal(results.length, 5)
+    assert.equal(results.length, 4)
+    assert.deepEqual(
+        results.slice(0, 2).map((event) => ({
+            content: event.data.content,
+            errorCode: event.data.errorCode,
+            outcome: event.data.outcome ?? null,
+        })),
+        [
+            { content: 'completed-A', errorCode: null, outcome: null },
+            { content: 'completed-B', errorCode: null, outcome: null },
+        ],
+    )
     assert.deepEqual(
         results.slice(2).map((event) => event.data.outcome),
-        ['not_executed', 'not_executed', 'not_executed'],
+        ['not_executed', 'not_executed'],
+    )
+    assert.deepEqual(
+        results.slice(2).map((event) => event.data.skipReason),
+        ['tool_call_limit', 'tool_call_limit'],
     )
     assert.deepEqual(
         results.slice(2).map((event) => event.data.retryable),
-        [false, false, false],
+        [false, false],
     )
+    assertProtocolComplete(harness)
+})
+
+test('synchronous Tool observers cannot interrupt parallel execution or Session results', async () => {
+    const harness = await createHarness()
+    const executions = []
+    harness.tools.register({
+        name: 'observed',
+        concurrencySafe: true,
+        async execute({ id }) {
+            executions.push(id)
+            await delay(5)
+            return `result-${id}`
+        },
+    })
+    registerTurn(harness.llm, 'observer-throw', [
+        call('observer-A', 'observed', { id: 'A' }),
+        call('observer-B', 'observed', { id: 'B' }),
+    ])
+
+    assert.equal(
+        await harness.agent('observer-throw').send('observe', {
+            onToolCall() {
+                throw new Error('onToolCall observer failed')
+            },
+            onToolResult() {
+                throw new Error('onToolResult observer failed')
+            },
+        }),
+        'done',
+    )
+    assert.deepEqual(executions, ['A', 'B'])
+    assert.deepEqual(
+        toolResults(harness).map((event) => event.data.toolCallId),
+        ['observer-A', 'observer-B'],
+    )
+    assertProtocolComplete(harness)
+})
+
+test('rejected asynchronous Tool observers are detached from the Agent run outcome', async () => {
+    const harness = await createHarness()
+    harness.tools.register({
+        name: 'async-observed',
+        concurrencySafe: true,
+        async execute({ id }) {
+            await delay(5)
+            return `result-${id}`
+        },
+    })
+    registerTurn(harness.llm, 'observer-rejection', [
+        call('async-A', 'async-observed', { id: 'A' }),
+        call('async-B', 'async-observed', { id: 'B' }),
+    ])
+    let callObservers = 0
+    const callObserver = () => {
+        callObservers += 1
+        if (callObservers === 1) return Promise.reject(new Error('async observer failed'))
+        return new Promise(() => {})
+    }
+
+    assert.equal(
+        await Promise.race([
+            harness.agent('observer-rejection').send('observe async', {
+                onToolCall: callObserver,
+                onToolResult: () => Promise.reject(new Error('async result observer failed')),
+            }),
+            delay(100).then(() => 'observer-timeout'),
+        ]),
+        'done',
+    )
+    assert.equal(toolResults(harness).length, 2)
     assertProtocolComplete(harness)
 })
 

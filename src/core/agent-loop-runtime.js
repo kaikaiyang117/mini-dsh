@@ -143,7 +143,7 @@ export class AgentLoopRuntime {
                     const batchController = new AbortController()
                     const toolSignal = combineAbortSignals(combinedSignal, batchController.signal)
                     let turnDecision = null
-                    const stopBatch = (decision) => {
+                    const stopAdmission = (decision) => {
                         if (
                             !turnDecision ||
                             decision.stopReason === 'cancelled' ||
@@ -151,6 +151,9 @@ export class AgentLoopRuntime {
                         ) {
                             turnDecision = decision
                         }
+                    }
+                    const stopBatch = (decision) => {
+                        stopAdmission(decision)
                         if (!batchController.signal.aborted) {
                             batchController.abort({ stopReason: turnDecision.stopReason })
                         }
@@ -172,12 +175,16 @@ export class AgentLoopRuntime {
 
                             const decision = controller.beforeToolCall(combinedSignal)
                             if (decision.action === 'stop') {
-                                stopBatch(decision)
+                                if (decision.stopReason === 'tool_call_limit') {
+                                    stopAdmission(decision)
+                                } else {
+                                    stopBatch(decision)
+                                }
                                 return notStartedRecord(index, call, decision.stopReason)
                             }
 
                             const toolTrace = stepTrace?.startToolCall(call)
-                            onToolCall?.(call)
+                            notifyObserver(onToolCall, call)
                             const result = await this.tools.execute(call.name, call.arguments, {
                                 signal: executionSignal,
                                 sessionId,
@@ -227,7 +234,7 @@ export class AgentLoopRuntime {
                         }
 
                         const { result, renderedContent } = record
-                        onToolResult?.({
+                        notifyObserver(onToolResult, {
                             ...result,
                             renderedContent,
                             name: call.name,
@@ -345,4 +352,13 @@ function skippedTraceStatus(stopReason) {
     return stopReason === 'cancelled' || stopReason === 'time_limit'
         ? 'cancelled'
         : 'budget_exhausted'
+}
+
+function notifyObserver(observer, value) {
+    if (typeof observer !== 'function') return
+    try {
+        Promise.resolve(observer(value)).catch(() => {})
+    } catch {
+        // Observers cannot affect execution or durable protocol events.
+    }
 }

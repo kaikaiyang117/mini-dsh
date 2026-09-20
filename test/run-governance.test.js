@@ -10,6 +10,43 @@ import { SessionRuntime } from '../src/core/session-runtime.js'
 import { SystemPromptRuntime } from '../src/core/system-prompt-runtime.js'
 import { ToolRuntime } from '../src/core/tool-runtime.js'
 
+test('CostEstimator prices cache tokens as an input partition', () => {
+    const estimator = new CostEstimator({
+        pricing: {
+            'mock/cache': {
+                inputPer1k: 1,
+                outputPer1k: 2,
+                cacheHitPer1k: 0.1,
+                cacheMissPer1k: 0.5,
+            },
+        },
+    })
+    const usage = estimator.estimate(
+        {
+            inputTokens: 1000,
+            outputTokens: 500,
+            cacheHitTokens: 600,
+            cacheMissTokens: 200,
+            cost: null,
+        },
+        { provider: 'mock', model: 'cache' },
+    )
+
+    // 200 uncached * 1 + 600 hit * .1 + 200 miss * .5 + 500 output * 2.
+    assert.equal(Number(usage.cost.toFixed(12)), 1.36)
+})
+
+test('CostEstimator boundary cases stay unknown instead of inventing cost', () => {
+    const estimator = new CostEstimator({ pricing: { default: { inputPer1k: 1, outputPer1k: 2 } } })
+    assert.equal(estimator.estimate({ inputTokens: 100, outputTokens: 20 }).cost, 0.14)
+    assert.equal(
+        estimator.estimate({ inputTokens: 100, outputTokens: 20, cacheHitTokens: 101 }).cost,
+        null,
+    )
+    assert.equal(estimator.estimate({ inputTokens: 100 }).cost, null)
+    assert.equal(estimator.estimate({ inputTokens: 100, outputTokens: 20, cost: 0 }).cost, 0)
+})
+
 test('production policy wiring supplies defaults and supports null env overrides', () => {
     assert.deepEqual(runPolicyFromEnv({}), {
         maxSteps: 32,
@@ -174,7 +211,116 @@ test('external abort remains cancelled even with a run deadline', async () => {
     assert.equal(stop.stopReason, 'cancelled')
 })
 
-async function createHarness({ policy, costEstimator } = {}) {
+test('onStop callback failure cannot change a successful Agent.send outcome', async () => {
+    const harness = await createHarness()
+    harness.llm.register(
+        'mock',
+        {
+            models: ['on-stop'],
+            async chat() {
+                return { content: 'success', toolCalls: [] }
+            },
+        },
+        { defaultModel: 'on-stop' },
+    )
+    const agent = harness.agents.create({
+        sessionId: harness.session.id,
+        model: 'mock/on-stop',
+        loop: harness.loop,
+    })
+
+    assert.equal(
+        await agent.send('callback', {
+            onStop: () => {
+                throw new Error('observer failed')
+            },
+        }),
+        'success',
+    )
+})
+
+test('onStop callback failure cannot replace the original Agent.send error', async () => {
+    const harness = await createHarness()
+    const original = new Error('llm failed')
+    harness.llm.register(
+        'mock',
+        {
+            models: ['on-stop-error'],
+            async chat() {
+                throw original
+            },
+        },
+        { defaultModel: 'on-stop-error' },
+    )
+    const agent = harness.agents.create({
+        sessionId: harness.session.id,
+        model: 'mock/on-stop-error',
+        loop: harness.loop,
+    })
+
+    await assert.rejects(
+        () =>
+            agent.send('callback', {
+                onStop: () => {
+                    throw new Error('observer failed')
+                },
+            }),
+        (error) => error === original,
+    )
+})
+
+test('onStop receives controller snapshot captured before trace persistence', async () => {
+    const clock = { value: 0 }
+    const trace = {
+        startRun() {
+            return {
+                runId: 'trace-run',
+                startStep() {
+                    return {
+                        startLlm() {},
+                        finishLlm() {},
+                        finish() {},
+                    }
+                },
+                async finish() {
+                    clock.value = 100
+                },
+            }
+        },
+    }
+    const harness = await createHarness({ trace })
+    harness.llm.register(
+        'mock',
+        {
+            models: ['snapshot'],
+            async chat() {
+                return {
+                    content: 'snapshot',
+                    usage: { inputTokens: 1, outputTokens: 1 },
+                    toolCalls: [],
+                }
+            },
+        },
+        { defaultModel: 'snapshot' },
+    )
+    const agent = harness.agents.create({
+        sessionId: harness.session.id,
+        model: 'mock/snapshot',
+        loop: harness.loop,
+    })
+    let stop
+    await agent.send('snapshot', {
+        now: () => clock.value,
+        onStop: (decision) => {
+            stop = decision
+        },
+    })
+
+    assert.equal(stop.stopReason, 'completed')
+    assert.equal(stop.state.elapsedMs, 0)
+})
+
+async function createHarness({ policy, costEstimator, trace } = {}) {
     const sessions = new SessionRuntime()
     const systemPrompt = new SystemPromptRuntime()
     const tools = new ToolRuntime()
@@ -187,6 +333,7 @@ async function createHarness({ policy, costEstimator } = {}) {
         llm,
         policy,
         costEstimator,
+        trace,
     })
     const session = await sessions.create()
     return { sessions, tools, llm, agents, loop, session }

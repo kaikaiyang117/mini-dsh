@@ -47,16 +47,22 @@ function calculateCost(usage, price) {
 
     const cacheHit = number(usage.cacheHitTokens)
     const cacheMiss = number(usage.cacheMissTokens)
-    const cacheHitRate = number(price.cacheHitPer1k)
-    const cacheMissRate = number(price.cacheMissPer1k)
-    const cacheCost =
-        cacheHit !== null && cacheHitRate !== null
-            ? (cacheHit * cacheHitRate) / 1000
-            : cacheMiss !== null && cacheMissRate !== null
-              ? (cacheMiss * cacheMissRate) / 1000
-              : 0
+    const cacheTokens = (cacheHit ?? 0) + (cacheMiss ?? 0)
+    if (cacheTokens > input) return null
 
-    return (input * inputRate) / 1000 + (output * outputRate) / 1000 + cacheCost
+    // cacheHit/cacheMiss are a partition of inputTokens, not an additional
+    // usage category. Price the uncached remainder once, then price each
+    // cache category without adding the full input total a second time.
+    const uncachedInput = input - cacheTokens
+    const cacheHitRate = number(price.cacheHitPer1k) ?? inputRate
+    const cacheMissRate = number(price.cacheMissPer1k) ?? inputRate
+    const inputCost =
+        (uncachedInput * inputRate +
+            (cacheHit ?? 0) * cacheHitRate +
+            (cacheMiss ?? 0) * cacheMissRate) /
+        1000
+
+    return inputCost + (output * outputRate) / 1000
 }
 
 function number(value) {

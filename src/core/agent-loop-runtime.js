@@ -210,8 +210,18 @@ export class AgentLoopRuntime {
             throw error
         } finally {
             deadline.dispose()
-            await runTrace?.finish(stopReason)
-            await onStop?.({ stopReason, state: controller.snapshot() })
+            const finalState = controller.snapshot()
+            try {
+                await runTrace?.finish(stopReason)
+            } finally {
+                // Lifecycle callbacks are observers. A callback failure must
+                // never replace the run result or the original run error.
+                try {
+                    await onStop?.({ stopReason, state: finalState })
+                } catch {
+                    // Intentionally ignored to preserve Agent.send() outcome.
+                }
+            }
         }
     }
 

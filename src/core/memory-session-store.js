@@ -30,7 +30,15 @@ export class MemorySessionStore extends SessionStore {
     }
 
     async list() {
-        return [...this.#sessions.values()].map(cloneSession)
+        return [...this.#sessions.values()].map((session) => {
+            const snapshot = cloneSession(session)
+            return {
+                ...snapshot,
+                createdAt: snapshot.events[0]?.at ?? snapshot.createdAt,
+                updatedAt: snapshot.events.at(-1)?.at ?? snapshot.createdAt,
+                eventCount: snapshot.events.length,
+            }
+        })
     }
 
     async close() {}

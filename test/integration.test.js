@@ -263,8 +263,11 @@ test('CLI can create, list, and resume durable sessions', async () => {
     try {
         const firstOutput = await runCli(directory, ['/sessions', '/new', '/sessions', '/exit'])
         const firstIds = [...new Set(firstOutput.match(uuidPattern) ?? [])]
-        assert.ok(firstIds.length >= 2, firstOutput)
+        assert.equal(firstIds.length, 1, firstOutput)
         assert.match(firstOutput, /New session:/)
+        assert.equal((await fs.readdir(directory)).length, 1)
+        const sessionFile = path.join(directory, firstIds[0], 'session.jsonl')
+        const beforeResume = await fs.readFile(sessionFile)
 
         const resumedOutput = await runCli(directory, [
             `/resume ${firstIds[0]}`,
@@ -273,6 +276,8 @@ test('CLI can create, list, and resume durable sessions', async () => {
         ])
         assert.match(resumedOutput, new RegExp(`Resumed session: ${firstIds[0]}`))
         assert.match(resumedOutput, new RegExp(firstIds[0]))
+        assert.equal((await fs.readdir(directory)).length, 1)
+        assert.deepEqual(await fs.readFile(sessionFile), beforeResume)
     } finally {
         await fs.rm(directory, { recursive: true, force: true })
     }

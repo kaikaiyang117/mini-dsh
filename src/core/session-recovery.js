@@ -13,6 +13,18 @@ export class SessionCorruptionError extends Error {
  */
 export async function readJsonlWithRecovery(filePath, fileSystem = { readFile, truncate }) {
     const buffer = await fileSystem.readFile(filePath)
+    return parseJsonlBuffer(buffer, {
+        recoverFinalLine: true,
+        truncate: (offset) => fileSystem.truncate(filePath, offset),
+    })
+}
+
+export async function readJsonl(filePath, fileSystem = { readFile }) {
+    const buffer = await fileSystem.readFile(filePath)
+    return parseJsonlBuffer(buffer)
+}
+
+async function parseJsonlBuffer(buffer, { recoverFinalLine = false, truncate: truncateFile } = {}) {
     const events = []
     let lineStart = 0
 
@@ -34,8 +46,8 @@ export async function readJsonlWithRecovery(filePath, fileSystem = { readFile, t
             event = JSON.parse(line)
         } catch (cause) {
             const isFinalLine = atEnd || index + 1 === buffer.length
-            if (isFinalLine && events.length > 0) {
-                await fileSystem.truncate(filePath, lineStart)
+            if (isFinalLine && recoverFinalLine && events.length > 0) {
+                await truncateFile(lineStart)
                 return events
             }
             throw new SessionCorruptionError(

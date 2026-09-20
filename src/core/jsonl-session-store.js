@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, open as openFile, readdir, readFile, truncate, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { readJsonlWithRecovery, SessionCorruptionError } from './session-recovery.js'
+import { readJsonl, readJsonlWithRecovery, SessionCorruptionError } from './session-recovery.js'
 import { SessionStore } from './session-store.js'
 
 export { SessionCorruptionError } from './session-recovery.js'
@@ -97,7 +97,16 @@ export class JsonlSessionStore extends SessionStore {
         const sessions = []
         for (const entry of entries) {
             if (!entry.isDirectory()) continue
-            sessions.push(await this.open(validateSessionId(entry.name)))
+            const id = validateSessionId(entry.name)
+            await this.#waitForWrites(id)
+            const events = await readJsonl(this.#sessionFile(id), this.#fileSystem)
+            sessions.push({
+                id,
+                createdAt: events[0]?.at ?? null,
+                updatedAt: events.at(-1)?.at ?? null,
+                eventCount: events.length,
+                events,
+            })
         }
         return sessions
     }

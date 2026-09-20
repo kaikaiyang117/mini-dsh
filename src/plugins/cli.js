@@ -33,15 +33,19 @@ export function apply(ctx, config = {}) {
         }
 
         const ready = (async () => {
-            createAgent(await ctx.sessions.create({ source: 'cli' }))
             console.log('\nmini-dsh: a learning runtime for DSH')
             console.log(
                 'commands: /tools /history /sessions /resume <session-id> /new /prompt /models /model [provider/model] /reset /exit\n',
             )
-            console.log(`model: ${agent.model}`)
+            console.log(`model: ${initialModel}`)
             console.log(`sandbox workspace: ${ctx.sandbox.workspace}`)
             console.log('Writes and bash execution ask [Y/n] first. Press Esc to cancel a run.\n')
         })()
+
+        const ensureSession = async () => {
+            if (!session) createAgent(await ctx.sessions.create({ source: 'cli' }))
+            return session
+        }
 
         const onStdinData = (chunk) => {
             if (!running || !abort || abort.signal.aborted) return
@@ -75,7 +79,7 @@ export function apply(ctx, config = {}) {
             }
 
             if (text === '/new') {
-                await ctx.sessions.close(session.id)
+                if (session) await ctx.sessions.close(session.id)
                 createAgent(await ctx.sessions.create({ source: 'cli' }))
                 console.log(`New session: ${session.id}\n`)
                 return ask()
@@ -85,7 +89,7 @@ export function apply(ctx, config = {}) {
                 const sessions = await ctx.sessions.list()
                 console.log(
                     sessions
-                        .map((item) => item.id + (item.id === session.id ? ' *' : ''))
+                        .map((item) => item.id + (item.id === session?.id ? ' *' : ''))
                         .join('\n') || '(no sessions)',
                 )
                 console.log()
@@ -95,6 +99,7 @@ export function apply(ctx, config = {}) {
             if (text.startsWith('/resume ')) {
                 const id = text.slice('/resume '.length).trim()
                 try {
+                    if (session && session.id !== id) await ctx.sessions.close(session.id)
                     const resumed = await ctx.sessions.open(id)
                     createAgent(resumed)
                     console.log(`Resumed session: ${session.id}\n`)
@@ -105,6 +110,10 @@ export function apply(ctx, config = {}) {
             }
 
             if (text === '/reset') {
+                if (!session) {
+                    console.log('No active session.\n')
+                    return ask()
+                }
                 await ctx.sessions.clear(session.id)
                 console.log('Session reset.\n')
                 return ask()
@@ -129,7 +138,7 @@ export function apply(ctx, config = {}) {
             }
 
             if (text === '/model') {
-                console.log(`model: ${agent.model}\n`)
+                console.log(`model: ${agent?.model ?? initialModel}\n`)
                 return ask()
             }
 
@@ -142,12 +151,16 @@ export function apply(ctx, config = {}) {
                     console.log()
                     return ask()
                 }
-                agent.model = selection
-                console.log(`switched model: ${agent.model}\n`)
+                if (agent) agent.model = selection
+                console.log(`switched model: ${agent?.model ?? selection}\n`)
                 return ask()
             }
 
             if (text === '/history') {
+                if (!session) {
+                    console.log('No active session.\n')
+                    return ask()
+                }
                 console.log(JSON.stringify(ctx.sessions.get(session.id).events, null, 2))
                 console.log()
                 return ask()
@@ -157,7 +170,7 @@ export function apply(ctx, config = {}) {
                 console.log(
                     await ctx.systemPrompt.assemble({
                         agent,
-                        sessionId: session.id,
+                        sessionId: session?.id ?? null,
                         step: 0,
                     }),
                 )
@@ -171,6 +184,7 @@ export function apply(ctx, config = {}) {
             let inContent = false
 
             try {
+                await ensureSession()
                 await agent.send(text, {
                     signal: abort.signal,
                     onReasoning(chunk) {

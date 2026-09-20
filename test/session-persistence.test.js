@@ -54,11 +54,48 @@ test('Jsonl create, restart, resume, list, flush, close and dispose', async () =
         const resumed = await second.open(session.id)
         assert.equal(resumed.id, session.id)
         assert.deepEqual(second.deriveMessages(session.id), [{ role: 'user', content: 'hello' }])
+        const listing = await second.list()
         assert.deepEqual(
-            (await second.list()).map((item) => item.id),
+            listing.map((item) => item.id),
             [session.id],
         )
+        assert.equal(listing[0].eventCount, 2)
+        assert.ok(listing[0].createdAt)
+        assert.ok(listing[0].updatedAt)
         await second.dispose()
+    })
+})
+
+test('SessionRuntime.list is read-only and does not hydrate or recover sessions', async () => {
+    await withDirectory(async (directory) => {
+        const first = new SessionRuntime({
+            store: new JsonlSessionStore({ directory }),
+        })
+        const session = await first.create()
+        await first.append(session.id, 'assistant/tool_calls', {
+            toolCalls: [{ id: 'call-1', name: 'unknown_tool', arguments: {} }],
+        })
+        await first.dispose()
+
+        const file = sessionFile(directory, session.id)
+        const before = await readFile(file)
+        const restarted = new SessionRuntime({
+            store: new JsonlSessionStore({ directory }),
+        })
+
+        const listing = await restarted.list()
+        const after = await readFile(file)
+        assert.deepEqual(after, before)
+        assert.equal(listing[0].eventCount, 2)
+        assert.throws(() => restarted.get(session.id), /not open/)
+        assert.deepEqual(
+            (await readFile(file, 'utf8'))
+                .trimEnd()
+                .split('\n')
+                .map((line) => JSON.parse(line).type),
+            ['session/start', 'assistant/tool_calls'],
+        )
+        await restarted.dispose()
     })
 })
 

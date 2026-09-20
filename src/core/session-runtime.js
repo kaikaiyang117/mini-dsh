@@ -92,10 +92,18 @@ export class SessionRuntime {
     }
 
     async list() {
-        const stored = await this.#store.list()
-        const sessions = []
-        for (const record of stored) sessions.push(await this.open(record.id))
-        return sessions
+        const records = await this.#store.list()
+        return records.map((record) => {
+            const events = record.events ?? []
+            const start = events.find((event) => event.type === 'session/start')
+            return {
+                id: record.id,
+                meta: { ...(start?.data?.meta ?? record.meta ?? {}) },
+                createdAt: record.createdAt ?? events[0]?.at ?? null,
+                updatedAt: record.updatedAt ?? events.at(-1)?.at ?? null,
+                eventCount: record.eventCount ?? events.length,
+            }
+        })
     }
 
     async flush(id) {

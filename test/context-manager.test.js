@@ -32,10 +32,17 @@ test('ContextManager matches the legacy projection and preserves Tool protocol w
     const projection = new ContextManager({ sessions }).project(session.id)
 
     assert.deepEqual(projection.messages, sessions.deriveMessages(session.id))
-    assert.deepEqual(projection.metadata, {
-        sourceEventCount: 5,
-        projectedMessageCount: 4,
-        compacted: false,
+    assert.equal(projection.metadata.sourceEventCount, 5)
+    assert.equal(projection.metadata.projectedMessageCount, 4)
+    assert.equal(projection.metadata.compacted, false)
+    assert.equal(projection.metadata.tokenEstimate.exact, false)
+    assert.equal(projection.metadata.tokenEstimate.method, 'heuristic-v1')
+    assert.ok(projection.metadata.tokenEstimate.tokens > 0)
+    assert.deepEqual(projection.metadata.pressure, {
+        state: 'disabled',
+        maxContextTokens: null,
+        availableInputTokens: null,
+        softLimitTokens: null,
     })
     assert.deepEqual(projection.messages[1], {
         role: 'assistant',
@@ -68,11 +75,9 @@ test('ContextManager preserves reset semantics while counting the complete sourc
 
     assert.deepEqual(projection.messages, [{ role: 'user', content: 'after reset' }])
     assert.deepEqual(projection.messages, sessions.deriveMessages(session.id))
-    assert.deepEqual(projection.metadata, {
-        sourceEventCount: 4,
-        projectedMessageCount: 1,
-        compacted: false,
-    })
+    assert.equal(projection.metadata.sourceEventCount, 4)
+    assert.equal(projection.metadata.projectedMessageCount, 1)
+    assert.equal(projection.metadata.compacted, false)
 })
 
 test('ContextManager projects a resumed durable Session from its complete history', async () => {
@@ -156,6 +161,12 @@ test('AgentLoop obtains model messages exclusively through the injected ContextM
     const llm = new LlmRuntime()
     const agents = new AgentRuntime()
     const session = await sessions.create()
+    systemPrompt.section({ name: 'test', text: 'system context' })
+    tools.register({
+        name: 'visible-tool',
+        description: 'visible schema',
+        execute() {},
+    })
     sessions.deriveMessages = () => {
         throw new Error('legacy projection must not be called')
     }
@@ -177,8 +188,11 @@ test('AgentLoop obtains model messages exclusively through the injected ContextM
         'mock',
         {
             models: ['context-boundary'],
-            async chat({ messages }) {
+            async chat({ messages, model, system, tools: requestTools }) {
                 assert.deepEqual(messages, [{ role: 'user', content: 'projected context' }])
+                assert.equal(model, 'context-boundary')
+                assert.equal(system, 'system context')
+                assert.equal(requestTools, projected.context.tools)
                 return { content: 'done', toolCalls: [] }
             },
         },
@@ -201,8 +215,61 @@ test('AgentLoop obtains model messages exclusively through the injected ContextM
     assert.equal(projected.sessionId, session.id)
     assert.equal(projected.context.agent, agent)
     assert.equal(projected.context.step, 1)
+    assert.equal(projected.context.model, 'mock/context-boundary')
+    assert.equal(projected.context.system, 'system context')
+    assert.equal(projected.context.tools.length, 1)
     assert.match(projected.context.runId, /^[0-9a-f-]{36}$/)
     assert.match(projected.context.stepId, /^[0-9a-f-]{36}$/)
+})
+
+test('ContextManager reports token estimate and pressure without changing projection or events', async () => {
+    const sessions = new SessionRuntime()
+    const session = await sessions.create()
+    await sessions.append(session.id, 'user/message', { content: 'unchanged' })
+    const before = JSON.stringify(session.events)
+    let request
+    const tokenMeter = {
+        estimateRequest(value) {
+            request = value
+            return { tokens: 70, exact: false, method: 'test-meter' }
+        },
+    }
+    const manager = new ContextManager({
+        sessions,
+        tokenMeter,
+        policy: {
+            maxContextTokens: 100,
+            reservedOutputTokens: 20,
+            compactAtRatio: 0.75,
+        },
+    })
+    const tools = [{ type: 'function', function: { name: 'read' } }]
+    const projection = manager.project(session.id, {
+        model: 'mock/model',
+        system: 'system',
+        tools,
+    })
+
+    assert.deepEqual(projection.messages, [{ role: 'user', content: 'unchanged' }])
+    assert.deepEqual(request, {
+        model: 'mock/model',
+        system: 'system',
+        messages: projection.messages,
+        tools,
+    })
+    assert.deepEqual(projection.metadata.tokenEstimate, {
+        tokens: 70,
+        exact: false,
+        method: 'test-meter',
+    })
+    assert.deepEqual(projection.metadata.pressure, {
+        state: 'soft_limit',
+        maxContextTokens: 100,
+        availableInputTokens: 80,
+        softLimitTokens: 60,
+    })
+    assert.equal(projection.metadata.compacted, false)
+    assert.equal(JSON.stringify(session.events), before)
 })
 
 async function createHarness() {

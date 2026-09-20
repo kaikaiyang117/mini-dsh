@@ -23,6 +23,8 @@ export class AgentLoopRuntime {
         scheduler,
         maxParallelToolCalls,
         contextManager,
+        tokenMeter,
+        contextPolicy,
     } = {}) {
         this.sessions = sessions
         this.systemPrompt = systemPrompt
@@ -31,7 +33,8 @@ export class AgentLoopRuntime {
         this.trace = trace
         this.policy = policy
         this.costEstimator = costEstimator
-        this.contextManager = contextManager ?? new ContextManager({ sessions })
+        this.contextManager =
+            contextManager ?? new ContextManager({ sessions, tokenMeter, policy: contextPolicy })
         this.controllerFactory = controllerFactory ?? ((options) => new RunController(options))
         this.scheduler =
             scheduler ??
@@ -89,11 +92,15 @@ export class AgentLoopRuntime {
                         sessionId,
                         step,
                     })
+                    const toolSchemas = this.tools.schemas()
                     const { messages } = await this.contextManager.project(sessionId, {
                         agent,
                         runId,
                         stepId,
                         step,
+                        model: agent.model,
+                        system,
+                        tools: toolSchemas,
                     })
 
                     let response
@@ -103,7 +110,7 @@ export class AgentLoopRuntime {
                             {
                                 system,
                                 messages,
-                                tools: this.tools.schemas(),
+                                tools: toolSchemas,
                                 signal: combinedSignal,
                                 onReasoning,
                                 onContent,

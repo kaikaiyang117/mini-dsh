@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { projectSessionEvents } from './context-manager.js'
+import { projectSessionEvents } from './context-projector.js'
 import { MemorySessionStore } from './memory-session-store.js'
 
 const INTERRUPTED_TOOL_MESSAGE =

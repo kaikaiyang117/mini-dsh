@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { ContextManager } from './context-manager.js'
 import { RunController } from './run-controller.js'
 import { combineAbortSignals, createRunDeadline } from './run-deadline.js'
 import { ToolScheduler } from './tool-scheduler.js'
@@ -21,6 +22,7 @@ export class AgentLoopRuntime {
         controllerFactory,
         scheduler,
         maxParallelToolCalls,
+        contextManager,
     } = {}) {
         this.sessions = sessions
         this.systemPrompt = systemPrompt
@@ -29,6 +31,7 @@ export class AgentLoopRuntime {
         this.trace = trace
         this.policy = policy
         this.costEstimator = costEstimator
+        this.contextManager = contextManager ?? new ContextManager({ sessions })
         this.controllerFactory = controllerFactory ?? ((options) => new RunController(options))
         this.scheduler =
             scheduler ??
@@ -86,7 +89,12 @@ export class AgentLoopRuntime {
                         sessionId,
                         step,
                     })
-                    const messages = this.sessions.deriveMessages(sessionId)
+                    const { messages } = await this.contextManager.project(sessionId, {
+                        agent,
+                        runId,
+                        stepId,
+                        step,
+                    })
 
                     let response
                     stepTrace?.startLlm()

@@ -64,13 +64,17 @@ The path once Context7 is connected:
 
 Writes and bash execution ask `[Y/n]` first. Press **Esc** while the agent is running to cancel the current run (arrow keys won't cancel it).
 
-## Why is there no 12-step limit in the Agent Loop?
+## Agent Loop governance and context
 
-The learning version deliberately uses:
+The core execution shape is still model -> tool -> model, but it is no longer an unbounded learning baseline. Every Agent Run is governed by a per-run `RunController` and a `ContextManager` projection:
 
 ```js
 while (true) {
-  const response = await model()
+  const stepDecision = controller.beforeStep(signal)
+  if (stepDecision.action === 'stop') return stepDecision
+
+  const context = await contextManager.prepare(sessionId, request)
+  const response = await model(context)
 
   if (!response.toolCalls?.length) {
     return response.content
@@ -80,23 +84,16 @@ while (true) {
 }
 ```
 
-The only normal-ending condition is whether the model keeps requesting tools.
+The runtime now includes:
 
-Deliberately omitted here:
+- per-run limits for steps, tool calls, duration, input/output tokens, estimated cost, and tool failures; `null` disables an individual limit;
+- run-level deadlines and cooperative cancellation for LLM and Tool execution;
+- Event Log-based Context Projection, token pressure reporting, and deterministic durable compaction;
+- append-only JSONL Session persistence with resume, replay, and interrupted-tool recovery;
+- bounded parallel execution for explicitly `concurrencySafe` Tools;
+- FIFO serialization for Agent Runs within one Session, while different Sessions may execute concurrently.
 
-- maxSteps
-- token/cost budget
-- compaction
-- no-progress detector
-- stop hooks
-- steering queue
-- full permission system (the learning version has an app-level path gate and a command denylist standing in front of the one real boundary: the CLI [Y/n] confirmation)
-- full model configuration center
-- TUI/Web UI
-
-These are very useful for a mature product, but not required to understand the core of an Agent Harness.
-
-> Note: a bad model/tool chain could therefore loop forever in theory. This project is for learning — do not use it as a production Agent Runtime.
+Still intentionally outside the current runtime scope are semantic no-progress detection, a steering queue, a full model configuration center, and a TUI/Web UI. The sandbox remains an application-level path/command policy with approval, not a kernel isolation boundary.
 
 ## For beginners: write it from scratch
 

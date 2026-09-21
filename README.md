@@ -164,6 +164,8 @@ test/core.test.js   ← behavior docs: one example per runtime
 
 The Agent Loop knows nothing about Context7 or Bash; it only knows `ctx.tools`. An Agent is just a thin wrapper: sessionId + model + loop (`src/core/agent-runtime.js`).
 
+Runtime invariant: within one process, a Session has at most one active Agent Run. Different Sessions may run concurrently. This is application-level serialization, not a distributed lock; separate mini-dsh processes do not coordinate access to the same Session directory. A queued cancellation is handed to the existing AgentLoop once that Run reaches the front of its Session queue; the coordinator does not add a separate cancellation state machine.
+
 That is the most valuable thing to learn in this project.
 
 ## Testing

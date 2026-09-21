@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { ContextManager } from './context-manager.js'
 import { RunController } from './run-controller.js'
 import { combineAbortSignals, createRunDeadline } from './run-deadline.js'
+import { SessionRunCoordinator } from './session-run-coordinator.js'
 import { ToolScheduler } from './tool-scheduler.js'
 
 const NOT_EXECUTED_RESULT = 'ToolError: the tool was not executed because the run stopped'
@@ -25,6 +26,7 @@ export class AgentLoopRuntime {
         contextManager,
         tokenMeter,
         contextPolicy,
+        runCoordinator,
     } = {}) {
         this.sessions = sessions
         this.systemPrompt = systemPrompt
@@ -42,9 +44,14 @@ export class AgentLoopRuntime {
                 tools,
                 maxParallelToolCalls,
             })
+        this.runCoordinator = runCoordinator ?? new SessionRunCoordinator()
     }
 
-    async run(
+    run(agent, input, options = {}) {
+        return this.runCoordinator.run(agent.sessionId, () => this.#runOnce(agent, input, options))
+    }
+
+    async #runOnce(
         agent,
         input,
         {

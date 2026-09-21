@@ -151,6 +151,17 @@ test('single Tool Call can only be compacted after its result', () => {
     assert.deepEqual(findProtocolSafeBoundaries(events, { afterSeq: 1 }), [3, 4])
 })
 
+test('ordinary conversation boundaries occur only after assistant messages', () => {
+    const events = [
+        event(1, 'user/message', { content: 'first' }),
+        event(2, 'assistant/message', { content: 'first answer' }),
+        event(3, 'user/message', { content: 'second' }),
+        event(4, 'assistant/message', { content: 'second answer' }),
+    ]
+
+    assert.deepEqual(findProtocolSafeBoundaries(events), [2, 4])
+})
+
 test('multi and parallel Tool results cannot be split by a compaction boundary', () => {
     const events = [
         event(1, 'user/message', { content: 'run both' }),
@@ -189,7 +200,7 @@ test('recovered and synthetic not_executed Tool results close protocol boundarie
             event(2, 'tool/result', resultData),
             event(3, 'user/message', { content: 'continue' }),
         ]
-        assert.deepEqual(findProtocolSafeBoundaries(events), [2, 3])
+        assert.deepEqual(findProtocolSafeBoundaries(events), [2])
     }
 })
 
@@ -243,6 +254,46 @@ test('valid first and second compactions form a monotonic lineage', () => {
     assert.equal(projected[0].role, 'assistant')
     assert.match(projected[0].content, /second summary/)
     assert.deepEqual(projected.slice(1), [{ role: 'user', content: 'latest raw goal' }])
+})
+
+test('compaction lineage is linear and rejects a fork from an older valid node', () => {
+    const events = lineageEvents()
+    events.push(event(9, 'assistant/message', { content: 'third answer' }))
+    events.push(
+        compactionEvent(10, {
+            shadowedFromSeq: 1,
+            shadowedThroughSeq: 9,
+            summary: 'forked third summary',
+            previousCompactionSeq: 3,
+        }),
+    )
+
+    const projected = projectSessionEvents(events)
+    assert.match(projected[0].content, /second summary/)
+    assert.doesNotMatch(projected[0].content, /forked third summary/)
+    assert.deepEqual(projected.slice(1), [
+        { role: 'user', content: 'latest raw goal' },
+        { role: 'assistant', content: 'third answer' },
+    ])
+})
+
+test('a later compaction may continue from the latest valid node after an invalid middle event', () => {
+    const events = lineageEvents({ shadowedFromSeq: 2 })
+    events.push(event(9, 'user/message', { content: 'third goal' }))
+    events.push(event(10, 'assistant/message', { content: 'third answer' }))
+    events.push(
+        compactionEvent(11, {
+            shadowedFromSeq: 1,
+            shadowedThroughSeq: 10,
+            summary: 'continued third summary',
+            previousCompactionSeq: 3,
+        }),
+    )
+
+    const projected = projectSessionEvents(events)
+    assert.equal(projected[0].role, 'assistant')
+    assert.match(projected[0].content, /continued third summary/)
+    assert.doesNotMatch(projected[0].content, /second summary/)
 })
 
 test('malformed repeated-compaction lineage falls back without breaking Tool protocol', () => {

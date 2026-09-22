@@ -36,7 +36,7 @@ pnpm start
 
 `.env.example` 里写的是 `deepseek/deepseek-v4-flash`；如果完全没有 `MINI_DSH_MODEL`（例如没复制 `.env`），入口回退到 `deepseek/deepseek-v4-pro`（`src/index.js:41`）。
 
-可选：填写 `CONTEXT7_API_KEY`。`mcp.context7.com` 不可达时 Context7 会标记为 `FAILED`，但 CLI 仍会启动。
+可选：填写 `CONTEXT7_API_KEY`。远端首次连接失败不会导致客户端 Fiber 启动失败；CLI 仍会启动，后续重连由官方客户端管理。`ACTIVE` 只表示 Fiber 已激活，不代表远端健康。
 
 Context7 连上之后的路径：
 

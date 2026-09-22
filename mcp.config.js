@@ -10,7 +10,7 @@ export default [
             headers: process.env.CONTEXT7_API_KEY
                 ? { Authorization: `Bearer ${process.env.CONTEXT7_API_KEY}` }
                 : {},
-            failOnStartupError: true,
+            failOnStartupError: false,
             toolCallTimeoutMs: 60_000,
         },
     },

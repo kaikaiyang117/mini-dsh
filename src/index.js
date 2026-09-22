@@ -8,6 +8,7 @@ import * as deepseek from './models/deepseek.js'
 import * as agentLoop from './plugins/agent-loop.js'
 import * as agents from './plugins/agents.js'
 import * as cli from './plugins/cli.js'
+import * as externalPlugins from './plugins/external-plugins.js'
 import * as llm from './plugins/llm.js'
 import * as mcp from './plugins/mcp.js'
 import * as runtimeContext from './plugins/runtime-context.js'
@@ -23,6 +24,7 @@ import * as files from './tools/files.js'
 dotenv.config()
 
 const { default: mcpConfig } = await import('../mcp.config.js')
+const { default: externalPluginConfig } = await import('../plugins.config.js')
 
 const root = new Context()
 const workspace = process.env.MINI_DSH_WORKSPACE ?? process.cwd()
@@ -33,6 +35,7 @@ await root.plugin(sessions, {
 await root.plugin(systemPrompt)
 await root.plugin(tools)
 await root.plugin(mcp, { servers: mcpConfig })
+await root.plugin(externalPlugins, { entries: externalPluginConfig })
 await root.plugin(llm)
 await root.plugin(trace)
 await root.plugin(agents)

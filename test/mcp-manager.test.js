@@ -4,6 +4,7 @@ import test from 'node:test'
 import { pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import { MCP_STATES, McpManager } from '../src/core/mcp-manager.js'
+import * as externalPlugins from '../src/plugins/external-plugins.js'
 import * as mcpPlugin from '../src/plugins/mcp.js'
 import * as toolsPlugin from '../src/plugins/tools.js'
 
@@ -44,10 +45,30 @@ test('register, list, and get expose lifecycle metadata without secrets', async 
     const status = manager.get('context7')
     assert.equal(status.state, MCP_STATES.DISCONNECTED)
     assert.equal(status.autoStart, true)
-    assert.equal(status.config.headers.Authorization, '[REDACTED]')
-    assert.equal(status.config.apiKey, '[REDACTED]')
-    assert.match(status.config.backupUrl, /token=%5BREDACTED%5D|token=\[REDACTED\]/)
-    assert.doesNotMatch(JSON.stringify(manager.list()), /secret-token|another-secret|query-secret/)
+    assert.deepEqual(Object.keys(status).sort(), [
+        'autoStart',
+        'lastError',
+        'name',
+        'package',
+        'state',
+    ])
+    assert.equal('config' in status, false)
+
+    manager.register({
+        name: 'sensitive-config',
+        config: {
+            env: {
+                PRIVATE_KEY: 'private-key-value',
+                CLIENT_CERT: 'client-certificate-value',
+                arbitrary: 'RANDOM_SECRET_VALUE',
+            },
+        },
+    })
+    const publicJson = JSON.stringify([manager.get('context7'), ...manager.list()])
+    assert.doesNotMatch(
+        publicJson,
+        /PRIVATE_KEY|CLIENT_CERT|private-key-value|client-certificate-value|RANDOM_SECRET_VALUE/,
+    )
 
     const unsafeManager = new McpManager({
         activate: async () => {
@@ -145,15 +166,104 @@ test('activation failure records FAILED and a later connect retries', async () =
     assert.equal(attempts, 2)
 })
 
-test('disconnect disposes an active fiber once', async () => {
+test('disconnect retries failed disposal and retains the fiber until cleanup succeeds', async () => {
     const { manager, calls } = activatorHarness()
+    let disposeAttempts = 0
+    const retryManager = new McpManager({
+        activate: async () => ({
+            dispose: async () => {
+                disposeAttempts += 1
+                if (disposeAttempts === 1) throw new Error('cleanup failed')
+            },
+        }),
+    })
+    retryManager.register({ name: 'context7' })
+    await retryManager.connect('context7')
+    await assert.rejects(() => retryManager.disconnect('context7'), /cleanup failed/)
+    assert.equal(retryManager.get('context7').state, MCP_STATES.FAILED)
+    assert.equal(retryManager.get('context7').lastError.message, 'cleanup failed')
+    await retryManager.disconnect('context7')
+    assert.equal(retryManager.get('context7').state, MCP_STATES.DISCONNECTED)
+    assert.equal(retryManager.get('context7').lastError, null)
+    assert.equal(disposeAttempts, 2)
+
+    // Keep a separate assertion that successful cleanup remains idempotent.
+    manager.register({ name: 'github' })
+    await manager.connect('github')
+    await manager.disconnect('github')
+    await manager.disconnect('github')
+    assert.equal(manager.get('github').state, MCP_STATES.DISCONNECTED)
+    assert.deepEqual(calls, ['activate:github', 'dispose:github'])
+})
+
+test('reload does not activate a new fiber if old disposal fails', async () => {
+    let activations = 0
+    const manager = new McpManager({
+        activate: async () => {
+            activations += 1
+            return {
+                dispose: async () => {
+                    throw new Error('cleanup failed')
+                },
+            }
+        },
+    })
     manager.register({ name: 'context7' })
     await manager.connect('context7')
-    await manager.disconnect('context7')
-    await manager.disconnect('context7')
+    await assert.rejects(() => manager.reload('context7'), /cleanup failed/)
+    assert.equal(activations, 1)
+    assert.equal(manager.get('context7').state, MCP_STATES.FAILED)
+})
 
-    assert.equal(manager.get('context7').state, MCP_STATES.DISCONNECTED)
-    assert.deepEqual(calls, ['activate:context7', 'dispose:context7'])
+test('connect retries old fiber cleanup before activation and does not create an orphan fiber', async () => {
+    let activations = 0
+    let disposeAttempts = 0
+    const manager = new McpManager({
+        activate: async () => {
+            activations += 1
+            return {
+                dispose: async () => {
+                    disposeAttempts += 1
+                    if (disposeAttempts === 1) throw new Error('cleanup failed')
+                },
+            }
+        },
+    })
+    manager.register({ name: 'context7' })
+    await manager.connect('context7')
+    await assert.rejects(() => manager.disconnect('context7'), /cleanup failed/)
+    await manager.connect('context7')
+    assert.equal(activations, 2)
+    assert.equal(disposeAttempts, 2)
+    assert.equal(manager.get('context7').state, MCP_STATES.ACTIVE)
+})
+
+test('unregister blocks new lifecycle operations and waits for active fiber cleanup', async () => {
+    let releaseDispose
+    const disposeGate = new Promise((resolve) => {
+        releaseDispose = resolve
+    })
+    let disposeCount = 0
+    const manager = new McpManager({
+        activate: async () => ({
+            dispose: async () => {
+                disposeCount += 1
+                await disposeGate
+            },
+        }),
+    })
+    const unregister = manager.register({ name: 'context7' })
+    await manager.connect('context7')
+
+    const unregistering = unregister()
+    await assert.rejects(() => manager.connect('context7'), /being removed/)
+    await assert.rejects(() => manager.disconnect('context7'), /being removed/)
+    await assert.rejects(() => manager.reload('context7'), /being removed/)
+    releaseDispose()
+    await unregistering
+    await unregister()
+    assert.equal(manager.get('context7'), undefined)
+    assert.equal(disposeCount, 1)
 })
 
 test('reload disposes the old fiber before activating the new one', async () => {
@@ -300,9 +410,22 @@ test('Context7 is configured only through the managed MCP config', async () => {
         managed.map((entry) => entry.name),
         ['context7'],
     )
-    assert.equal(managed[0].config.failOnStartupError, true)
+    assert.equal(managed[0].config.failOnStartupError, false)
     assert.equal(
         external.some((entry) => entry.config?.serverName === 'context7'),
         false,
     )
+})
+
+test('ordinary external Cordis plugins remain loadable through the generic loader', async () => {
+    const root = new Context()
+    try {
+        await root.plugin(toolsPlugin)
+        await root.plugin(externalPlugins, {
+            entries: [{ package: fakePlugin }],
+        })
+        assert.ok(root.tools.get('mcp__fake__echo'))
+    } finally {
+        await root.fiber.dispose()
+    }
 })

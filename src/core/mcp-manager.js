@@ -36,14 +36,19 @@ export class McpManager {
             lastError: null,
             fiber: null,
             tail: null,
+            removing: false,
         }
         this.#records.set(normalized.name, record)
 
-        let disposed = false
+        let unregistering = null
         return () => {
-            if (disposed) return
-            disposed = true
-            void this.unregister(normalized.name)
+            if (!unregistering) {
+                unregistering = this.unregister(normalized.name).catch((error) => {
+                    unregistering = null
+                    throw error
+                })
+            }
+            return unregistering
         }
     }
 
@@ -59,18 +64,21 @@ export class McpManager {
     async connect(name) {
         this.#assertOpen()
         const record = this.#require(name)
+        this.#assertNotRemoving(record)
         return this.#enqueue(record, () => this.#connectUnlocked(record))
     }
 
     async disconnect(name) {
         this.#assertOpen()
         const record = this.#require(name)
+        this.#assertNotRemoving(record)
         return this.#enqueue(record, () => this.#disconnectUnlocked(record))
     }
 
     async reload(name) {
         this.#assertOpen()
         const record = this.#require(name)
+        this.#assertNotRemoving(record)
         return this.#enqueue(record, async () => {
             await this.#disconnectUnlocked(record)
             return this.#connectUnlocked(record)
@@ -94,7 +102,13 @@ export class McpManager {
     async unregister(name) {
         const record = this.#records.get(name)
         if (!record) return
-        await this.#enqueue(record, () => this.#disconnectUnlocked(record)).catch(() => {})
+        record.removing = true
+        try {
+            await this.#enqueue(record, () => this.#disconnectUnlocked(record))
+        } catch (error) {
+            record.removing = false
+            throw error
+        }
         if (this.#records.get(name) === record) this.#records.delete(name)
     }
 
@@ -129,6 +143,8 @@ export class McpManager {
     async #connectUnlocked(record) {
         if (record.state === MCP_STATES.ACTIVE) return snapshot(record)
 
+        if (record.fiber) await this.#disconnectUnlocked(record)
+
         record.state = MCP_STATES.CONNECTING
         record.lastError = null
         try {
@@ -149,12 +165,20 @@ export class McpManager {
 
     async #disconnectUnlocked(record) {
         const fiber = record.fiber
-        record.fiber = null
-        try {
-            if (fiber) await fiber.dispose()
-        } finally {
+        if (!fiber) {
             record.state = MCP_STATES.DISCONNECTED
             record.lastError = null
+            return snapshot(record)
+        }
+        try {
+            await fiber.dispose()
+            record.fiber = null
+            record.state = MCP_STATES.DISCONNECTED
+            record.lastError = null
+        } catch (error) {
+            record.state = MCP_STATES.FAILED
+            record.lastError = error
+            throw error
         }
         return snapshot(record)
     }
@@ -167,6 +191,11 @@ export class McpManager {
 
     #assertOpen() {
         if (this.#disposed) throw new Error('McpManager is disposed')
+    }
+
+    #assertNotRemoving(record) {
+        if (record.removing)
+            throw new Error(`MCP server is being removed: ${record.definition.name}`)
     }
 }
 
@@ -209,7 +238,6 @@ function snapshot(record) {
         name: record.definition.name,
         package: record.definition.package,
         autoStart: record.definition.autoStart,
-        config: redact(record.definition.config),
         state: record.state,
         lastError: record.lastError ? errorSnapshot(record.lastError) : null,
     }
@@ -222,25 +250,9 @@ function errorSnapshot(error) {
     }
 }
 
-function redact(value, key = '') {
-    if (isSecretKey(key)) return '[REDACTED]'
-    if (Array.isArray(value)) return value.map((item) => redact(item))
-    if (value && typeof value === 'object') {
-        return Object.fromEntries(
-            Object.entries(value).map(([childKey, child]) => [childKey, redact(child, childKey)]),
-        )
-    }
-    if (typeof value === 'string') return redactText(value)
-    return value
-}
-
 function redactText(value) {
     return String(value)
         .replace(/(authorization)\s*[:=]\s*(?:bearer\s+)?[^\s,;]+/gi, '$1=[REDACTED]')
         .replace(/(api[-_]?key|token|secret|password)\s*[:=]\s*[^\s,;]+/gi, '$1=[REDACTED]')
         .replace(/([?&](?:api[-_]?key|token|secret|password)=)[^&\s]+/gi, '$1[REDACTED]')
-}
-
-function isSecretKey(key) {
-    return /authorization|api[-_]?key|token|secret|password|credential|cookie/i.test(key)
 }

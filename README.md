@@ -36,7 +36,7 @@ pnpm start
 
 `.env.example` sets `deepseek/deepseek-v4-flash`. If `MINI_DSH_MODEL` is absent entirely (e.g. you didn't copy `.env`), the entry falls back to `deepseek/deepseek-v4-pro` (`src/index.js:41`).
 
-Optional: fill in `CONTEXT7_API_KEY`. When `mcp.context7.com` is unreachable, Context7 is marked `FAILED` and the CLI still starts.
+Optional: fill in `CONTEXT7_API_KEY`. A remote startup failure does not fail the client Fiber: the CLI starts and the official client manages reconnect. `ACTIVE` only reports Fiber activation, not remote health.
 
 The path once Context7 is connected:
 

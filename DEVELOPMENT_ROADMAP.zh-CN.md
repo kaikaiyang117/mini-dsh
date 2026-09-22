@@ -231,7 +231,7 @@ LLM Request
 
 官方 DSH MCP Client 已经覆盖 stdio / Streamable HTTP、server-qualified namespace、tool discovery、timeout、reconnect 与生命周期释放。
 
-mini-dsh 当前已经使用官方 MCP Client，因此后续不重写 MCP 协议栈，而是在其上增加 Harness 自己的 `McpManager`：
+mini-dsh 已使用官方 MCP Client，并完成 Harness 层 `McpManager` 的 plugin-instance lifecycle；不重写 MCP 协议栈。当前 Manager 管理 registry 与生命周期，不自行观测远端 transport health，也不实现 search-triggered lazy activation。后续增强可以包括：
 
 ```text
 registry
@@ -861,52 +861,21 @@ Benchmark：50~100 Step 长任务，比较：
 
 ---
 
-# 13. Phase 7：Managed MCP Lifecycle
+# 13. Phase 7：Managed MCP Lifecycle ✅
 
-当前官方 `@deepseek-ai/dsh-mcp-client` 已负责 MCP 协议连接和 Tool 注册，本阶段不重写协议。
+已完成 `McpManager` 的 server registry 和 plugin-instance lifecycle，支持 `DISCONNECTED`、`CONNECTING`、`ACTIVE`、`FAILED` 状态，以及 `/mcp list|connect|disconnect|reload`。生命周期清理失败会保留 fiber 句柄并允许重试；server 间 lifecycle 操作可并发，同一 server 的操作有序执行。
 
-新增 Harness 层：
-
-```text
-McpManager
-  ├── server registry
-  ├── lifecycle state
-  ├── health
-  ├── reconnect policy
-  ├── namespace view
-  └── tool catalog integration
-```
-
-状态示例：
-
-```text
-DISCONNECTED
-CONNECTING
-READY
-RECONNECTING
-FAILED
-```
-
-CLI 可增加：
-
-```text
-/mcp list
-/mcp connect <name>
-/mcp disconnect <name>
-/mcp reload <name>
-```
-
-故障测试：startup unavailable、mid-run disconnect、restart、reconnect exhausted、namespace collision。
+MCP 协议、transport、discovery、Tool 同步和 reconnect 仍由官方 `@deepseek-ai/dsh-mcp-client` 负责。`ACTIVE` 仅表示客户端 Plugin Fiber 激活成功，不代表远端 transport 健康；本项目不做 MCP transport health observation。搜索已注册 MCP Tools 可用，但通过 Tool Search 惰性连接未连接 Server 尚未实现，属于后续 enhancement。
 
 ---
 
 # 14. Phase 8：Progressive Tool Disclosure【个人重点】
 
-Phase 8.1 已建立 Tool Catalog 与 Per-Step Visibility 基础边界：AgentLoop 每个 Step 从当前 ToolRuntime 创建快照，由 Visibility 选择 Model-visible schemas；默认策略仍暴露全部已注册 Tool。该边界不承担授权。
+Phase 8.1 Tool Catalog & Visibility Contract ✅：AgentLoop 每个 Step 从当前 ToolRuntime 创建 `ToolCatalog` 快照，由 Visibility 选择 Model-visible schemas；默认 `AllToolsVisibility` 暴露全部已注册 Tool。该边界不承担授权。
 
-Phase 8.2 已增加 opt-in Deterministic Tool Routing：基于 ASCII lexical overlap 对名称、描述和 Schema property 名评分；默认仍为全量可见，无可靠命中时回退全部 Tool。它不提供跨语言语义、同义词或 intent tracking。
+Phase 8.2 Deterministic Tool Routing ✅：opt-in `DeterministicToolVisibility` 基于名称、描述和 Schema property 名中的 ASCII lexical overlap 排序；默认仍为全量可见，无可靠命中时回退全部 Tool。它不提供跨语言语义、同义词或 intent tracking。
 
-Phase 8.3 已实现 Progressive Tool Search：`progressive` 模式将 no-match 时只返回 pinned Tool 的确定性基础集合、固定可见的 `tool_search` 与 Run-scoped activation 合并；搜索完整的当前注册 Tool Catalog，命中只会在下一 Step 暴露，Run 结束清理激活，并受 `MINI_DSH_MAX_ACTIVATED_TOOLS` 限制。单独使用 Deterministic 模式仍保留 no-match 回退全部 Tool 的兼容行为，小 Catalog 仍全部可见。搜索仍是 ASCII lexical matching；当前阶段不连接未启动 MCP Server。后续 Lazy MCP 与 Evaluation 仍未实现。
+Phase 8.3 Progressive Tool Search ✅：`ProgressiveToolVisibility` 将 no-match 时只返回 pinned Tool 的确定性基础集合、固定可见的 `tool_search` 与 Run-scoped activation 合并；搜索完整的当前注册 Tool Catalog，命中只会在下一 Step 暴露，Run 结束清理激活，并受 `MINI_DSH_MAX_ACTIVATED_TOOLS` 限制。单独使用 Deterministic 模式仍保留 no-match 回退全部 Tool 的兼容行为，小 Catalog 仍全部可见。搜索仍是 ASCII lexical matching；当前阶段不连接未启动 MCP Server。后续 Eval、Semantic Progress Detection、Fault Injection，以及作为 enhancement 的 Lazy MCP 均未实现。
 
 问题：随着 MCP Server / Tool 数量增长，如果所有 Tool Schema 每轮都发送给模型，会增加上下文开销并引入无关候选。
 
@@ -953,7 +922,7 @@ Tool Activation 可以按 Session 维护：
 base tools + activated tools
 ```
 
-后续与 MCP Manager 联动实现 Lazy MCP：先保留 server metadata，需要时才连接、discover、activate。
+未来可与已完成的 MCP Manager 联动实现 Lazy MCP：先保留 server metadata，需要时才连接、discover、activate。
 
 核心实验：
 
@@ -1228,20 +1197,20 @@ Git 历史应成为“从最小 Harness 一层层做出工程能力”的直接�
 核心路线完成后，至少满足：
 
 ```text
-[ ] Session 可以跨进程恢复
-[ ] JSONL Event Log 是唯一权威历史
-[ ] 撕裂尾部可以恢复
-[ ] 中断 Tool Call 不会盲目重试副作用
-[ ] Run 有统一 Budget 和 Stop Reason
-[ ] Tool 参数会被统一校验
-[ ] Tool Timeout / Cancellation 有明确语义
-[ ] 并发安全 Tool 支持有界并行
-[ ] Cancellation 保持 Tool Call / Result 一致性
-[ ] 长 Session 支持 Token-aware Compaction
-[ ] MCP Server 有 Harness 级生命周期视图
-[ ] 大规模 Tool 支持 Progressive Disclosure
+[x] Session 可以跨进程恢复
+[x] JSONL Event Log 是唯一权威历史
+[x] 撕裂尾部可以恢复
+[x] 中断 Tool Call 不会盲目重试副作用
+[x] Run 有统一 Budget 和 Stop Reason
+[x] Tool 参数会被统一校验
+[x] Tool Timeout / Cancellation 有明确语义
+[x] 并发安全 Tool 支持有界并行
+[x] Cancellation 保持 Tool Call / Result 一致性
+[x] 长 Session 支持 Token-aware Compaction
+[x] MCP Server 有 Harness 级生命周期视图
+[x] 大规模 Tool 支持 Progressive Disclosure
 [ ] 可以检测重复/无进展执行
-[ ] 每个 Run 有结构化 Trace
+[x] 每个 Run 有结构化 Trace
 [ ] 有可重复 Eval Suite
 [ ] 有 Fault Injection Cases
 [ ] 所有优化都有 Baseline 数据

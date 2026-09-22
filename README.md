@@ -107,13 +107,21 @@ The runtime now includes:
 - bounded parallel execution for explicitly `concurrencySafe` Tools;
 - FIFO serialization for Agent Runs within one Session, while different Sessions may execute concurrently.
 
-Model-visible Tools are selected per Step through `ToolCatalog` and `ToolVisibility`:
+`ToolCatalog` snapshots metadata for currently registered Tools. Per-Step visibility is selected by `AllToolsVisibility`, `DeterministicToolVisibility`, or `ProgressiveToolVisibility`:
 
 ```text
 Registered Tools -> Tool Catalog -> Per-Step Visibility -> Model Request
 ```
 
-Default visibility selects all registered Tools. Set `MINI_DSH_TOOL_ROUTING=deterministic` for lexical Top-K routing (`MINI_DSH_MAX_VISIBLE_TOOLS`, default `12`); on large catalogs, no-match and non-ASCII-only queries fall back to all Tools for compatibility. Set `MINI_DSH_TOOL_ROUTING=progressive` to pin `tool_search` alongside a deterministic base that instead returns only pinned Tools on a no-match; catalogs no larger than the configured Top-K still bypass routing. The search uses the same lexical ranking against the full current Tool Catalog, returns compact name/description matches, and activates hits for later Steps in the current Run only (`MINI_DSH_MAX_ACTIVATED_TOOLS`, default `24`). This gives the model a chance to refine its search query between Steps. A reached activation limit is reported in the result; matches are still returned. Each Step takes a fresh catalog snapshot, and Run completion clears activation state. Matching is ASCII-token based: it does not understand cross-language meaning, synonyms, semantic similarity, or intent changes beyond the query the model supplies. `/tools` continues to show registered Tools; visibility is not authorization, and hidden Tools remain executable through the Tool Runtime. Progressive discovery does not lazily connect MCP servers; only already-registered Tools can be found.
+Configuration (defaults shown):
+
+```dotenv
+MINI_DSH_TOOL_ROUTING=all
+MINI_DSH_MAX_VISIBLE_TOOLS=12
+MINI_DSH_MAX_ACTIVATED_TOOLS=24
+```
+
+`MINI_DSH_TOOL_ROUTING=all` exposes every registered Tool. `MINI_DSH_TOOL_ROUTING=deterministic` applies lexical Top-K routing; on large catalogs, no-match and non-ASCII-only queries fall back to all Tools for compatibility. `MINI_DSH_TOOL_ROUTING=progressive` pins `tool_search` alongside a deterministic base that instead returns only pinned Tools on a no-match; catalogs no larger than the configured Top-K still bypass routing. The search uses the same lexical ranking against the full current Tool Catalog, returns compact name/description matches, and activates hits for later Steps in the current Run only. This gives the model a chance to refine its search query between Steps. A reached activation limit is reported in the result; matches are still returned. Each Step takes a fresh catalog snapshot, and Run completion clears activation state. Matching is ASCII-token based: it does not understand cross-language meaning, synonyms, or semantic similarity. `/tools` continues to show registered Tools; visibility is not authorization, and hidden Tools remain executable through the Tool Runtime. Progressive discovery does not lazily connect MCP servers; it discovers only already-registered Tools.
 
 Still intentionally outside the current runtime scope are semantic no-progress detection, a steering queue, a full model configuration center, and a TUI/Web UI. The sandbox remains an application-level path/command policy with approval, not a kernel isolation boundary.
 

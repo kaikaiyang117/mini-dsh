@@ -132,6 +132,8 @@ MINI_DSH_PROGRESS_SOFT_STEPS=3
 MINI_DSH_PROGRESS_HARD_STEPS=6
 ```
 
+`MINI_DSH_PROGRESS_SOFT_STEPS` 在 `remind` 和 `guarded` 模式生效。`MINI_DSH_PROGRESS_HARD_STEPS` 只在 `guarded` 模式参与运行时决策；`off` 不创建 Detector。所有模式都会校验显式设置的阈值。
+
 ## Evaluation
 
 运行 `pnpm eval:tool-routing` 可用确定性 Mock 比较 Harness 的 Tool Visibility 策略；运行 `pnpm eval:progress` 可比较 baseline、remind 与 guarded 的进展检测行为。这些是 Harness 评测，不代表生产模型质量。真实模型评测、文件系统与长任务，以及 Fault Injection 留待后续阶段。

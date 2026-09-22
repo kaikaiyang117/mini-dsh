@@ -132,6 +132,8 @@ MINI_DSH_PROGRESS_SOFT_STEPS=3
 MINI_DSH_PROGRESS_HARD_STEPS=6
 ```
 
+`MINI_DSH_PROGRESS_SOFT_STEPS` applies in `remind` and `guarded`. `MINI_DSH_PROGRESS_HARD_STEPS` affects runtime only in `guarded`; `off` creates no detector. Explicit threshold values are validated in every mode.
+
 ## Evaluation
 
 Run `pnpm eval:tool-routing` for the deterministic mock evaluation of Harness Tool Visibility policies, or `pnpm eval:progress` to compare baseline, reminder, and guarded progress behavior. These are Harness evaluations, not production-model quality benchmarks. Real-model evaluation, filesystem and long-horizon tasks, and fault injection are future work.

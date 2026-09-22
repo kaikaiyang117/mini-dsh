@@ -31,6 +31,38 @@ test('off does not create detectors and active modes create one detector per fac
     assert.notEqual(factory(), factory())
 })
 
+test('only guarded mode applies a hard stop threshold', () => {
+    const repeatedEmpty = {
+        state: 'settled',
+        call: { name: 'search', arguments: {} },
+        result: { value: '', isError: false },
+    }
+    const remind = progressDetectorFactory(
+        progressConfigFromEnv({
+            MINI_DSH_PROGRESS_MODE: 'remind',
+            MINI_DSH_PROGRESS_SOFT_STEPS: '1',
+            MINI_DSH_PROGRESS_HARD_STEPS: '2',
+        }),
+    )()
+    remind.observeStep({ records: [repeatedEmpty] })
+    let remindDecision
+    for (let index = 0; index < 8; index += 1) {
+        remindDecision = remind.observeStep({ records: [repeatedEmpty] })
+    }
+    assert.notEqual(remindDecision.action, 'stop')
+
+    const guarded = progressDetectorFactory(
+        progressConfigFromEnv({
+            MINI_DSH_PROGRESS_MODE: 'guarded',
+            MINI_DSH_PROGRESS_SOFT_STEPS: '1',
+            MINI_DSH_PROGRESS_HARD_STEPS: '2',
+        }),
+    )()
+    guarded.observeStep({ records: [repeatedEmpty] })
+    guarded.observeStep({ records: [repeatedEmpty] })
+    assert.equal(guarded.observeStep({ records: [repeatedEmpty] }).action, 'stop')
+})
+
 test('invalid mode and step thresholds fail fast', () => {
     for (const env of [
         { MINI_DSH_PROGRESS_MODE: 'sometimes' },

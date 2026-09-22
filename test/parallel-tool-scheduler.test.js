@@ -280,6 +280,43 @@ test('external cancellation cancels running calls and skips queued calls with co
     }
 })
 
+test('scheduler failure after tool-call commit appends one synthetic result per call', async () => {
+    const scheduler = {
+        async execute() {
+            throw new Error('injected scheduler dispatch failure')
+        },
+    }
+    const harness = await createHarness({ scheduler })
+    let executions = 0
+    harness.tools.register({
+        name: 'committed',
+        async execute() {
+            executions += 1
+            return 'must not execute'
+        },
+    })
+    registerTurn(harness.llm, 'scheduler-failure', [call('committed-1', 'committed')])
+
+    await assert.rejects(
+        () => harness.agent('scheduler-failure').send('trigger committed dispatch failure'),
+        /injected scheduler dispatch failure/,
+    )
+
+    const events = harness.sessions.get(harness.session.id).events
+    const calls = events
+        .filter((event) => event.type === 'assistant/tool_calls')
+        .flatMap((event) => event.data.toolCalls.map(({ id }) => id))
+    const results = events.filter((event) => event.type === 'tool/result')
+    assert.deepEqual(calls, ['committed-1'])
+    assert.deepEqual(
+        results.map((event) => event.data.toolCallId),
+        calls,
+    )
+    assert.equal(results[0].data.outcome, 'not_executed')
+    assert.equal(results[0].data.skipReason, 'internal_error')
+    assert.equal(executions, 0)
+})
+
 test('run deadline cancels running calls, skips queued calls, and remains time_limit at run level', async () => {
     const harness = await createHarness({
         maxParallelToolCalls: 2,
@@ -455,7 +492,7 @@ test('rejected asynchronous Tool observers are detached from the Agent run outco
     assertProtocolComplete(harness)
 })
 
-async function createHarness({ maxParallelToolCalls, policy, trace } = {}) {
+async function createHarness({ maxParallelToolCalls, policy, trace, scheduler } = {}) {
     const sessions = new SessionRuntime()
     const systemPrompt = new SystemPromptRuntime()
     const tools = new ToolRuntime()
@@ -469,6 +506,7 @@ async function createHarness({ maxParallelToolCalls, policy, trace } = {}) {
         trace,
         policy,
         maxParallelToolCalls,
+        scheduler,
     })
     const session = await sessions.create()
     return {

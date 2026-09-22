@@ -232,57 +232,105 @@ export class AgentLoopRuntime {
 
                     if (usageDecision.action === 'stop') stopBatch(usageDecision)
 
-                    const records = await this.scheduler.execute(toolCalls, {
-                        signal: toolSignal,
-                        run: async (call, { index, signal: executionSignal }) => {
-                            if (combinedSignal?.aborted) {
-                                const decision = controller.beforeToolCall(combinedSignal)
-                                stopBatch(decision)
-                                return notStartedRecord(index, call, decision.stopReason)
-                            }
-                            if (turnDecision) {
-                                return notStartedRecord(index, call, turnDecision.stopReason)
-                            }
-
-                            const decision = controller.beforeToolCall(combinedSignal)
-                            if (decision.action === 'stop') {
-                                if (decision.stopReason === 'tool_call_limit') {
-                                    stopAdmission(decision)
-                                } else {
+                    const startedToolCalls = new Set()
+                    const settledToolRecords = new Map()
+                    let records
+                    try {
+                        records = await this.scheduler.execute(toolCalls, {
+                            signal: toolSignal,
+                            run: async (call, { index, signal: executionSignal }) => {
+                                if (combinedSignal?.aborted) {
+                                    const decision = controller.beforeToolCall(combinedSignal)
                                     stopBatch(decision)
+                                    return notStartedRecord(index, call, decision.stopReason)
                                 }
-                                return notStartedRecord(index, call, decision.stopReason)
-                            }
+                                if (turnDecision) {
+                                    return notStartedRecord(index, call, turnDecision.stopReason)
+                                }
 
-                            const toolTrace = stepTrace?.startToolCall(call)
-                            notifyObserver(onToolCall, call)
-                            const result = await this.tools.execute(call.name, call.arguments, {
-                                signal: executionSignal,
-                                sessionId,
-                                runId,
-                                stepId,
-                                toolCallId: call.id,
-                                agent,
-                            })
-                            toolTrace?.finish(toolTraceStatus(result))
+                                const decision = controller.beforeToolCall(combinedSignal)
+                                if (decision.action === 'stop') {
+                                    if (decision.stopReason === 'tool_call_limit') {
+                                        stopAdmission(decision)
+                                    } else {
+                                        stopBatch(decision)
+                                    }
+                                    return notStartedRecord(index, call, decision.stopReason)
+                                }
 
-                            if (!turnDecision) {
-                                const resultDecision = controller.recordToolResult(
+                                startedToolCalls.add(call.id)
+                                const toolTrace = stepTrace?.startToolCall(call)
+                                notifyObserver(onToolCall, call)
+                                const result = await this.tools.execute(call.name, call.arguments, {
+                                    signal: executionSignal,
+                                    sessionId,
+                                    runId,
+                                    stepId,
+                                    toolCallId: call.id,
+                                    agent,
+                                })
+                                toolTrace?.finish(toolTraceStatus(result))
+
+                                if (!turnDecision) {
+                                    const resultDecision = controller.recordToolResult(
+                                        result,
+                                        combinedSignal,
+                                    )
+                                    if (resultDecision.action === 'stop') stopBatch(resultDecision)
+                                }
+
+                                const record = {
+                                    index,
+                                    call,
+                                    state: 'settled',
                                     result,
-                                    combinedSignal,
+                                    renderedContent: this.tools.renderResult(result),
+                                }
+                                settledToolRecords.set(call.id, record)
+                                return record
+                            },
+                        })
+                    } catch (error) {
+                        const answered = new Set(
+                            this.sessions
+                                .get(sessionId)
+                                .events.filter(
+                                    (event) =>
+                                        event.type === 'tool/result' &&
+                                        event.data.runId === runId &&
+                                        event.data.stepId === stepId,
                                 )
-                                if (resultDecision.action === 'stop') stopBatch(resultDecision)
+                                .map((event) => event.data.toolCallId),
+                        )
+                        for (const call of toolCalls) {
+                            if (answered.has(call.id)) continue
+                            const record = settledToolRecords.get(call.id)
+                            if (record) {
+                                await this.sessions.append(sessionId, 'tool/result', {
+                                    toolCallId: call.id,
+                                    name: call.name,
+                                    isError: record.result.isError,
+                                    errorCode: record.result.errorCode,
+                                    content: record.renderedContent,
+                                    runId,
+                                    stepId,
+                                })
+                            } else if (startedToolCalls.has(call.id)) {
+                                await this.#appendUnknownToolResult(sessionId, call, runId, stepId)
+                            } else {
+                                stepTrace?.skipToolCall(call, 'error')
+                                await this.#appendSyntheticToolResult(
+                                    sessionId,
+                                    call,
+                                    runId,
+                                    stepId,
+                                    'internal_error',
+                                )
                             }
-
-                            return {
-                                index,
-                                call,
-                                state: 'settled',
-                                result,
-                                renderedContent: this.tools.renderResult(result),
-                            }
-                        },
-                    })
+                            answered.add(call.id)
+                        }
+                        throw error
+                    }
 
                     if (combinedSignal?.aborted) {
                         stopBatch(controller.beforeToolCall(combinedSignal))
@@ -407,6 +455,22 @@ export class AgentLoopRuntime {
             skipReason: stopReason,
             retryable: false,
             budgetStop: stopReason !== 'cancelled',
+            runId,
+            stepId,
+        })
+    }
+
+    async #appendUnknownToolResult(sessionId, call, runId, stepId) {
+        await this.sessions.append(sessionId, 'tool/result', {
+            toolCallId: call.id,
+            name: call.name,
+            isError: true,
+            errorCode: null,
+            content:
+                'ToolError: scheduler failed after Tool execution started; actual outcome is unknown',
+            outcome: 'unknown',
+            recovered: false,
+            retryable: false,
             runId,
             stepId,
         })

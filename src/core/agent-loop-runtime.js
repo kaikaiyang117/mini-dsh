@@ -31,6 +31,7 @@ export class AgentLoopRuntime {
         runCoordinator,
         toolCatalog,
         toolVisibility,
+        progressDetectorFactory,
     } = {}) {
         this.sessions = sessions
         this.systemPrompt = systemPrompt
@@ -51,6 +52,7 @@ export class AgentLoopRuntime {
                 maxParallelToolCalls,
             })
         this.runCoordinator = runCoordinator ?? new SessionRunCoordinator()
+        this.progressDetectorFactory = progressDetectorFactory
     }
 
     run(agent, input, options = {}) {
@@ -77,6 +79,12 @@ export class AgentLoopRuntime {
         const combinedSignal = combineAbortSignals(signal, deadline.signal)
         const runTrace = this.trace?.startRun({ sessionId, model: agent.model })
         const runId = runTrace?.runId ?? randomUUID()
+        let progressDetector
+        try {
+            progressDetector = this.progressDetectorFactory?.({ runId, sessionId, agent })
+        } catch {
+            // Progress detection is an optional, fail-open run-local heuristic.
+        }
         let stopReason = 'internal_error'
         let lastContent = ''
 
@@ -105,11 +113,17 @@ export class AgentLoopRuntime {
                 const stepTrace = runTrace?.startStep()
                 const stepId = stepTrace?.stepId ?? randomUUID()
                 try {
-                    const system = await this.systemPrompt.assemble({
+                    let system = await this.systemPrompt.assemble({
                         agent,
                         sessionId,
                         step,
                     })
+                    try {
+                        const reminder = progressDetector?.takeReminder()
+                        if (reminder) system = appendProgressReminder(system, reminder)
+                    } catch {
+                        // A reminder failure must not prevent the model request.
+                    }
                     const catalogSnapshot = this.toolCatalog.snapshot()
                     const visibleNames = await this.toolVisibility.select({
                         catalog: catalogSnapshot.list(),
@@ -312,6 +326,19 @@ export class AgentLoopRuntime {
                         stopBatch(controller.beforeToolCall(combinedSignal))
                     }
 
+                    if (!turnDecision && progressDetector) {
+                        try {
+                            const progress = progressDetector.observeStep({ toolCalls, records })
+                            const progressDecision = controller.recordProgress(
+                                progress,
+                                combinedSignal,
+                            )
+                            if (progressDecision.action === 'stop') turnDecision = progressDecision
+                        } catch {
+                            // Progress detection is auxiliary and always fails open.
+                        }
+                    }
+
                     if (turnDecision) {
                         return this.#finishDecision(
                             turnDecision,
@@ -423,4 +450,8 @@ function notifyObserver(observer, value) {
     } catch {
         // Observers cannot affect execution or durable protocol events.
     }
+}
+
+function appendProgressReminder(system, reminder) {
+    return system ? `${system}\n\n${reminder}` : reminder
 }

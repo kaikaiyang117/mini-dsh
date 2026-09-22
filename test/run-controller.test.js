@@ -108,6 +108,46 @@ test('RunController maps final hard context pressure to context_overflow', () =>
     )
 })
 
+test('RunController records progress and preserves existing stop-reason priority', () => {
+    const controller = new RunController()
+    assert.equal(controller.recordProgress({ action: 'continue' }).action, 'continue')
+    assert.equal(controller.recordProgress({ action: 'stop' }).stopReason, 'no_progress')
+
+    const cancelled = new AbortController()
+    cancelled.abort()
+    assert.equal(
+        new RunController({ policy: { maxSteps: 0 } }).recordProgress(
+            { action: 'stop' },
+            cancelled.signal,
+        ).stopReason,
+        'cancelled',
+    )
+
+    const timeLimited = new AbortController()
+    timeLimited.abort({ stopReason: 'time_limit' })
+    assert.equal(
+        new RunController().recordProgress({ action: 'stop' }, timeLimited.signal).stopReason,
+        'time_limit',
+    )
+    assert.equal(
+        new RunController({ policy: { maxInputTokens: 1 } }).recordLlmUsage({ inputTokens: 1 })
+            .stopReason,
+        'input_token_limit',
+    )
+
+    const tokenLimited = new RunController({ policy: { maxInputTokens: 1 } })
+    tokenLimited.recordLlmUsage({ inputTokens: 1 })
+    assert.equal(tokenLimited.recordProgress({ action: 'stop' }).stopReason, 'input_token_limit')
+
+    const costLimited = new RunController({ policy: { maxCost: 1 } })
+    costLimited.recordLlmUsage({ cost: 1 })
+    assert.equal(costLimited.recordProgress({ action: 'stop' }).stopReason, 'cost_limit')
+
+    const failureLimited = new RunController({ policy: { maxToolFailures: 1 } })
+    failureLimited.recordToolResult({ isError: true })
+    assert.equal(failureLimited.recordProgress({ action: 'stop' }).stopReason, 'tool_failure_limit')
+})
+
 async function createHarness({ policy, trace, now } = {}) {
     const sessions = new SessionRuntime()
     const systemPrompt = new SystemPromptRuntime()

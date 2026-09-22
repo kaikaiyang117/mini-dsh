@@ -946,6 +946,8 @@ Tool Search
 
 # 15. Phase 9：Semantic Progress Detection【个人重点】
 
+Phase 9.1 Deterministic Progress Guard V1 ✅：按 Run 隔离状态，以规范化 Tool Call、结果类别、指纹和新颖度作保守启发式判断；支持默认关闭、软提醒和显式 guarded hard stop，并通过确定性 Mock Eval 检查恢复收益与误杀保护。它不包含 workspace diff、goal delta 或语义模型；这些仍是未来研究信号。
+
 官方已有 repeat-tool-reminder，主要针对连续完全相同的 Tool Call。
 
 本项目继续研究更高层“是否真的取得进展”。
@@ -1107,7 +1109,7 @@ Phase 7  Managed MCP Lifecycle
    ↓
 Phase 8  Progressive Tool Disclosure
    ↓
-Phase 9  Semantic Progress Detection
+Phase 9.1  Deterministic Progress Guard V1 ✅
    ↓
 Phase 10 Agent Evaluation
    ↓

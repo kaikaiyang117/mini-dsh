@@ -43,7 +43,12 @@ export class CapturingTraceRuntime {
 }
 
 export class EvalRunner {
-    constructor({ cases, fixtureFactory, scorer = targetToolCalledScorer } = {}) {
+    constructor({
+        cases,
+        variants = EVAL_VARIANTS,
+        fixtureFactory,
+        scorer = targetToolCalledScorer,
+    } = {}) {
         if (!Array.isArray(cases) || cases.length === 0) {
             throw new TypeError('EvalRunner requires at least one EvalCase')
         }
@@ -60,8 +65,17 @@ export class EvalRunner {
         }
         if (typeof scorer !== 'function')
             throw new TypeError('EvalRunner scorer must be a function')
+        if (
+            !Array.isArray(variants) ||
+            variants.length === 0 ||
+            variants.some((variant) => typeof variant !== 'string' || variant.length === 0) ||
+            new Set(variants).size !== variants.length
+        ) {
+            throw new TypeError('EvalRunner variants must be unique non-empty strings')
+        }
 
         this.cases = cases
+        this.variants = [...variants]
         this.fixtureFactory = fixtureFactory
         this.scorer = scorer
     }
@@ -69,12 +83,12 @@ export class EvalRunner {
     async run() {
         const results = []
         for (const evalCase of this.cases) {
-            for (const variant of EVAL_VARIANTS) {
+            for (const variant of this.variants) {
                 results.push(await this.#runCase(evalCase, variant))
             }
         }
         return {
-            variants: summarizeEvalResults(results, EVAL_VARIANTS),
+            variants: summarizeEvalResults(results, this.variants),
             results,
         }
     }

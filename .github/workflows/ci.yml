@@ -23,6 +23,7 @@ jobs:
                     - check
                     - lint
                     - eval:tool-routing
+                    - eval:progress
         steps:
             - name: Check out repository
               uses: actions/checkout@v4

@@ -2,6 +2,7 @@ import { Context } from '@deepseek-ai/cordis'
 import dotenv from 'dotenv'
 import { contextPolicyFromEnv } from './core/context-policy-config.js'
 import { CostEstimator, pricingFromEnv } from './core/cost-estimator.js'
+import { progressConfigFromEnv, progressDetectorFactory } from './core/progress-config.js'
 import { runPolicyFromEnv } from './core/run-policy-config.js'
 import { ToolCatalog } from './core/tool-catalog.js'
 import { maxParallelToolCallsFromEnv } from './core/tool-scheduler.js'
@@ -38,6 +39,7 @@ await root.plugin(sessions, {
 await root.plugin(systemPrompt)
 await root.plugin(tools)
 const routing = createToolRoutingFromEnv()
+const progress = progressConfigFromEnv()
 const toolCatalog = new ToolCatalog({ tools: root.tools })
 if (routing.activationStore) {
     await root.plugin(toolSearch, { toolCatalog, activationStore: routing.activationStore })
@@ -55,6 +57,7 @@ await root.plugin(agentLoop, {
     maxParallelToolCalls: maxParallelToolCallsFromEnv(),
     toolCatalog,
     toolVisibility: routing.visibility,
+    progressDetectorFactory: progressDetectorFactory(progress),
 })
 
 await root.plugin(runtimeContext, { workspace })

@@ -34,6 +34,9 @@ export function summarizeEvalResults(results, variants) {
             const visibleTools = sum(selected.map((result) => result.visibleToolCount))
             const requestCount = sum(selected.map((result) => result.requestCount))
             const successes = selected.filter((result) => result.success).length
+            const noProgressStops = selected.filter(
+                (result) => result.stopReason === 'no_progress',
+            ).length
             const inputTokens = summarizeKnownUsage(selected, 'inputTokens')
             const outputTokens = summarizeKnownUsage(selected, 'outputTokens')
             const reasoningTokens = summarizeKnownUsage(selected, 'reasoningTokens')
@@ -47,6 +50,7 @@ export function summarizeEvalResults(results, variants) {
                     cases: selected.length,
                     successes,
                     successRate: selected.length === 0 ? null : successes / selected.length,
+                    noProgressStops,
                     avgSteps: average(selected.map((result) => result.steps)),
                     avgToolCalls: average(selected.map((result) => result.toolCalls)),
                     avgVisibleTools: requestCount === 0 ? null : visibleTools / requestCount,

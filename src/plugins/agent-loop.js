@@ -22,6 +22,7 @@ class AgentLoopService extends Service {
             maxParallelToolCalls: config.maxParallelToolCalls,
             toolCatalog: config.toolCatalog,
             toolVisibility: config.toolVisibility,
+            progressDetectorFactory: config.progressDetectorFactory,
             tokenMeter: config.tokenMeter,
             contextPolicy: config.contextPolicy,
         })

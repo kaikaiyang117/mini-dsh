@@ -121,6 +121,16 @@ export class RunController {
         return this.#limitDecision()
     }
 
+    recordProgress(progress, signal) {
+        const external = this.#externalDecision(signal)
+        if (external) return external
+
+        const existingLimit = this.#limitDecision()
+        if (existingLimit.action === 'stop') return existingLimit
+        if (progress?.action === 'stop') return this.#stop('no_progress')
+        return this.#continue()
+    }
+
     recordContextPressure(pressure, signal) {
         const external = this.#externalDecision(signal)
         if (external) return external

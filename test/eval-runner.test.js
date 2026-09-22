@@ -28,7 +28,27 @@ test('tool routing Eval runs every case in the fixed variant order', async () =>
     for (const variant of EVAL_VARIANTS) {
         assert.equal(report.variants[variant].cases, 5)
         assert.equal(report.variants[variant].successes, 5)
+        assert.equal(report.variants[variant].noProgressStops, 0)
     }
+})
+
+test('EvalRunner accepts custom variants while retaining its default variant behavior', async () => {
+    const report = await new EvalRunner({
+        cases: [{ name: 'custom', prompt: 'run', expected: { targetTool: 'target' } }],
+        variants: ['baseline', 'guarded'],
+        fixtureFactory: async () => ({
+            agent: { async send() {} },
+            trace: { latest: () => successfulTrace() },
+            recordingTokenMeter: new RecordingTokenMeter(),
+        }),
+        scorer: () => ({ success: true, targetToolCalled: true, targetToolSucceeded: true }),
+    }).run()
+
+    assert.deepEqual(
+        report.results.map(({ variant }) => variant),
+        ['baseline', 'guarded'],
+    )
+    assert.deepEqual(Object.keys(report.variants), ['baseline', 'guarded'])
 })
 
 test('target tool scorer distinguishes a call from a successful execution', () => {
@@ -172,6 +192,7 @@ test('summary aggregation keeps unknown provider usage unavailable, not zero', (
                 reasoningTokens: null,
                 cost: null,
                 durationMs: 2,
+                stopReason: 'no_progress',
             },
         ],
         ['all'],
@@ -192,6 +213,7 @@ test('summary aggregation keeps unknown provider usage unavailable, not zero', (
     assert.equal(report.avgEstimatedInputTokens, 240)
     assert.equal(report.avgEstimatedInputTokensPerRequest, 120)
     assert.equal(report.totalRequestCount, 2)
+    assert.equal(report.noProgressStops, 1)
 })
 
 test('repeated Eval runs keep all functional metrics deterministic', async () => {

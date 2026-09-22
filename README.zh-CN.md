@@ -106,6 +106,7 @@ while (true) {
 - append-only JSONL Session persistence、resume、replay 和 interrupted-tool recovery；
 - 只对显式标记 `concurrencySafe` 的 Tool 做有界并行；
 - 同一 Session 内 Agent Run FIFO 串行，不同 Session 可以并发。
+- 可选的 Run-scoped 确定性 no-progress 检测、临时策略提醒和显式启用的 hard stop。
 
 `ToolCatalog` 为当前已注册 Tool 提供 metadata snapshot。每个 Step 的可见策略由 `AllToolsVisibility`、`DeterministicToolVisibility` 或 `ProgressiveToolVisibility` 选择：
 
@@ -123,11 +124,17 @@ MINI_DSH_MAX_ACTIVATED_TOOLS=24
 
 `MINI_DSH_TOOL_ROUTING=all` 暴露全部已注册 Tool。`MINI_DSH_TOOL_ROUTING=deterministic` 使用词法 Top-K 路由；大 Catalog 无匹配时回退到全部 Tool，以保持兼容。`MINI_DSH_TOOL_ROUTING=progressive` 固定暴露 `tool_search`，基础路由在无匹配时只返回 pinned Tools；不超过 Top-K 的小 Catalog 仍全量可见。搜索使用相同词法排序检索当前完整 Tool Catalog，只返回精简名称/描述，并将命中 Tool 激活到当前 Run 的后续 Step。这让模型可以在不同 Step 间调整搜索 query。达到激活上限时结果会列出未激活的命中；每个 Step 都读取新 Catalog snapshot，Run 结束会清除激活状态。匹配仅基于 ASCII 词元，不具备跨语言语义、同义词或语义相似度理解。`/tools` 继续展示已注册 Tool；Visibility 不是授权机制，被隐藏的 Tool 仍可通过 Tool Runtime 执行。Progressive Search 不会惰性连接 MCP Server，只发现已经注册的 Tool。
 
-当前仍不在 Runtime 范围内：语义 no-progress detection、steering queue、完整模型配置中心和 TUI/Web UI。Sandbox 仍然是应用层路径/命令 Policy 加人工确认，不是内核级隔离。
+Semantic Progress Detection V1 是可选的确定性启发式规则，结合规范化 Tool Call、结果类别、结果指纹和结果新颖度，检测重复且没有新信息的执行。默认 `off`；`remind` 注入固定的临时策略提醒；`guarded` 还会以 `no_progress` 停止 Run。它不是 LLM 语义裁判、embedding 相似度、完整目标状态推理或 workspace 语义 diff。Workspace 变化和目标进展仍是未来可探索的信号。Sandbox 仍然是应用层路径/命令 Policy 加人工确认，不是内核级隔离。
+
+```dotenv
+MINI_DSH_PROGRESS_MODE=off
+MINI_DSH_PROGRESS_SOFT_STEPS=3
+MINI_DSH_PROGRESS_HARD_STEPS=6
+```
 
 ## Evaluation
 
-运行 `pnpm eval:tool-routing` 可执行 V0 确定性 Mock 评测，用于比较 Harness 的 Tool Visibility 策略；它不是生产模型质量 Benchmark。真实模型评测、文件系统与长任务，以及 Fault Injection 留待后续阶段。
+运行 `pnpm eval:tool-routing` 可用确定性 Mock 比较 Harness 的 Tool Visibility 策略；运行 `pnpm eval:progress` 可比较 baseline、remind 与 guarded 的进展检测行为。这些是 Harness 评测，不代表生产模型质量。真实模型评测、文件系统与长任务，以及 Fault Injection 留待后续阶段。
 
 ## 给新手：从零手写
 

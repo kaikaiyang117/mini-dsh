@@ -106,6 +106,7 @@ The runtime now includes:
 - append-only JSONL Session persistence with resume, replay, and interrupted-tool recovery;
 - bounded parallel execution for explicitly `concurrencySafe` Tools;
 - FIFO serialization for Agent Runs within one Session, while different Sessions may execute concurrently.
+- optional, Run-scoped deterministic no-progress detection with ephemeral strategy reminders and an opt-in hard stop.
 
 `ToolCatalog` snapshots metadata for currently registered Tools. Per-Step visibility is selected by `AllToolsVisibility`, `DeterministicToolVisibility`, or `ProgressiveToolVisibility`:
 
@@ -123,11 +124,17 @@ MINI_DSH_MAX_ACTIVATED_TOOLS=24
 
 `MINI_DSH_TOOL_ROUTING=all` exposes every registered Tool. `MINI_DSH_TOOL_ROUTING=deterministic` applies lexical Top-K routing; on large catalogs, no-match and non-ASCII-only queries fall back to all Tools for compatibility. `MINI_DSH_TOOL_ROUTING=progressive` pins `tool_search` alongside a deterministic base that instead returns only pinned Tools on a no-match; catalogs no larger than the configured Top-K still bypass routing. The search uses the same lexical ranking against the full current Tool Catalog, returns compact name/description matches, and activates hits for later Steps in the current Run only. This gives the model a chance to refine its search query between Steps. A reached activation limit is reported in the result; matches are still returned. Each Step takes a fresh catalog snapshot, and Run completion clears activation state. Matching is ASCII-token based: it does not understand cross-language meaning, synonyms, or semantic similarity. `/tools` continues to show registered Tools; visibility is not authorization, and hidden Tools remain executable through the Tool Runtime. Progressive discovery does not lazily connect MCP servers; it discovers only already-registered Tools.
 
-Still intentionally outside the current runtime scope are semantic no-progress detection, a steering queue, a full model configuration center, and a TUI/Web UI. The sandbox remains an application-level path/command policy with approval, not a kernel isolation boundary.
+Semantic Progress Detection V1 is an opt-in deterministic heuristic. It combines normalized Tool calls, outcome classes, result fingerprints, and result novelty to detect repeated no-information execution. `off` is the default; `remind` adds a fixed, ephemeral strategy reminder; `guarded` also stops a Run with `no_progress`. This is not an LLM semantic judge, embedding similarity, full goal-state reasoning, or a workspace semantic diff. Workspace changes and goal deltas remain future signals. The sandbox remains an application-level path/command policy with approval, not a kernel isolation boundary.
+
+```dotenv
+MINI_DSH_PROGRESS_MODE=off
+MINI_DSH_PROGRESS_SOFT_STEPS=3
+MINI_DSH_PROGRESS_HARD_STEPS=6
+```
 
 ## Evaluation
 
-Run `pnpm eval:tool-routing` for the V0 deterministic mock evaluation of Harness Tool Visibility policies. It is not a production-model quality benchmark. Real-model evaluation, filesystem and long-horizon tasks, and fault injection are future work.
+Run `pnpm eval:tool-routing` for the deterministic mock evaluation of Harness Tool Visibility policies, or `pnpm eval:progress` to compare baseline, reminder, and guarded progress behavior. These are Harness evaluations, not production-model quality benchmarks. Real-model evaluation, filesystem and long-horizon tasks, and fault injection are future work.
 
 ## For beginners: write it from scratch
 

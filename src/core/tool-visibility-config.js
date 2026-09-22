@@ -24,12 +24,22 @@ export function createToolRoutingFromEnv(env = process.env) {
         return { mode: routing, visibility: new AllToolsVisibility(), activationStore: null }
     }
 
-    const baseVisibility = new DeterministicToolVisibility({ maxVisibleTools })
     if (routing === 'deterministic') {
-        return { mode: routing, visibility: baseVisibility, activationStore: null }
+        return {
+            mode: routing,
+            visibility: new DeterministicToolVisibility({
+                maxVisibleTools,
+                noMatchFallback: 'all',
+            }),
+            activationStore: null,
+        }
     }
     if (routing === 'progressive') {
         const activationStore = new ToolActivationStore({ maxActivatedTools })
+        const baseVisibility = new DeterministicToolVisibility({
+            maxVisibleTools,
+            noMatchFallback: 'none',
+        })
         return {
             mode: routing,
             visibility: new ProgressiveToolVisibility({ baseVisibility, activationStore }),

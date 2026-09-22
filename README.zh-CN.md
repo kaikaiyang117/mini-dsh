@@ -113,7 +113,7 @@ while (true) {
 Registered Tools -> Tool Catalog -> Per-Step Visibility -> Model Request
 ```
 
-默认 Visibility 仍选择全部已注册 Tool。设置 `MINI_DSH_TOOL_ROUTING=deterministic` 可启用词法 Top-K 路由（`MINI_DSH_MAX_VISIBLE_TOOLS` 默认 `12`）；没有匹配或 query 只有非 ASCII 词元时回退到全部 Tool。设置为 `progressive` 时，会在该确定性基础策略上固定暴露 `tool_search`。搜索使用同一词法排序，在当前完整 Tool Catalog 中查找，只返回精简的名称/描述，并将命中 Tool 激活到当前 Run 后续 Step（`MINI_DSH_MAX_ACTIVATED_TOOLS` 默认 `24`）；达到上限时结果会明确列出未激活命中，但仍返回这些匹配。这让模型可以在不同 Step 间调整搜索 query。每个 Step 都读取新 Catalog 快照，Run 结束会清除激活状态。匹配仅基于 ASCII 词元，不理解跨语言语义、同义词、语义相似度，也无法自行推断模型未表达在搜索 query 中的意图。`/tools` 继续展示已注册 Tool；Visibility 不是授权机制，被隐藏的 Tool 仍可通过 Tool Runtime 执行。Progressive Search 不会惰性连接 MCP Server，只能发现已经注册的 Tool。
+默认 Visibility 仍选择全部已注册 Tool。设置 `MINI_DSH_TOOL_ROUTING=deterministic` 可启用词法 Top-K 路由（`MINI_DSH_MAX_VISIBLE_TOOLS` 默认 `12`）；大 Catalog 无匹配或 query 只有非 ASCII 词元时，为保持兼容会回退到全部 Tool。设置为 `progressive` 时，会固定暴露 `tool_search`，并使用 no-match 返回 pinned Tool 的确定性基础策略；小于等于 Top-K 的 Catalog 仍维持全量可见。搜索使用同一词法排序，在当前完整 Tool Catalog 中查找，只返回精简的名称/描述，并将命中 Tool 激活到当前 Run 后续 Step（`MINI_DSH_MAX_ACTIVATED_TOOLS` 默认 `24`）；达到上限时结果会明确列出未激活命中，但仍返回这些匹配。这让模型可以在不同 Step 间调整搜索 query。每个 Step 都读取新 Catalog 快照，Run 结束会清除激活状态。匹配仅基于 ASCII 词元，不理解跨语言语义、同义词、语义相似度，也无法自行推断模型未表达在搜索 query 中的意图。`/tools` 继续展示已注册 Tool；Visibility 不是授权机制，被隐藏的 Tool 仍可通过 Tool Runtime 执行。Progressive Search 不会惰性连接 MCP Server，只能发现已经注册的 Tool。
 
 当前仍不在 Runtime 范围内：语义 no-progress detection、steering queue、完整模型配置中心和 TUI/Web UI。Sandbox 仍然是应用层路径/命令 Policy 加人工确认，不是内核级隔离。
 

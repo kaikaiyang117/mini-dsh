@@ -9,10 +9,12 @@ export class DeterministicToolVisibility {
         maxVisibleTools = DEFAULT_MAX_VISIBLE_TOOLS,
         alwaysVisible = [],
         minimumScore = DEFAULT_MINIMUM_TOOL_SCORE,
+        noMatchFallback = 'all',
     } = {}) {
         this.maxVisibleTools = normalizeMaxVisibleTools(maxVisibleTools)
         this.alwaysVisible = Object.freeze(normalizeAlwaysVisible(alwaysVisible))
         this.minimumScore = normalizeMinimumScore(minimumScore)
+        this.noMatchFallback = normalizeNoMatchFallback(noMatchFallback)
         Object.freeze(this)
     }
 
@@ -22,12 +24,12 @@ export class DeterministicToolVisibility {
         if (catalog.length === 0) return []
         if (catalog.length <= this.maxVisibleTools) return names
 
-        if (String(input ?? '').trim() === '') return names
-
         const pinned = new Set(names.filter((name) => this.alwaysVisible.includes(name)))
         const scored = rankTools(catalog, input, { minimumScore: this.minimumScore })
 
-        if (scored.length === 0) return names
+        if (scored.length === 0) {
+            return this.noMatchFallback === 'all' ? names : [...pinned]
+        }
 
         const ranked = scored
             .filter(({ name }) => !pinned.has(name))
@@ -54,6 +56,13 @@ function normalizeAlwaysVisible(value) {
 function normalizeMinimumScore(value) {
     if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
         throw new TypeError('minimumScore must be a non-negative finite number')
+    }
+    return value
+}
+
+function normalizeNoMatchFallback(value) {
+    if (value !== 'all' && value !== 'none') {
+        throw new TypeError('noMatchFallback must be "all" or "none"')
     }
     return value
 }

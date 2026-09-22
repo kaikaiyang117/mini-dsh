@@ -19,6 +19,11 @@ test('small catalogs bypass routing and return every Tool', () => {
     const catalog = [tool('one'), tool('two')]
     const visibility = new DeterministicToolVisibility({ maxVisibleTools: 2 })
     assert.deepEqual(visibility.select({ catalog, input: 'no match' }), ['one', 'two'])
+    const progressiveBase = new DeterministicToolVisibility({
+        maxVisibleTools: 2,
+        noMatchFallback: 'none',
+    })
+    assert.deepEqual(progressiveBase.select({ catalog, input: 'no match' }), ['one', 'two'])
 })
 
 test('exact tool-name token match outranks unrelated candidates', () => {
@@ -64,13 +69,40 @@ test('Top-K uses deterministic score ordering with registration-order tie breaks
 })
 
 test('no positive lexical match safely falls back to all registered Tools', () => {
-    const catalog = [tool('read_file', { description: 'Read a file' }), tool('run_query')]
+    const catalog = Array.from({ length: 20 }, (_, index) =>
+        tool(`github_tool_${index}`, { description: `English tool description ${index}` }),
+    )
     const visibility = new DeterministicToolVisibility({ maxVisibleTools: 1 })
-    assert.deepEqual(visibility.select({ catalog, input: '查找天气' }), ['read_file', 'run_query'])
-    assert.deepEqual(visibility.select({ catalog, input: 'unrelated term' }), [
-        'read_file',
-        'run_query',
-    ])
+    assert.deepEqual(
+        visibility.select({ catalog, input: '帮我查看仓库的问题' }),
+        catalog.map(({ name }) => name),
+    )
+    assert.deepEqual(
+        visibility.select({ catalog, input: 'unrelated term' }),
+        catalog.map(({ name }) => name),
+    )
+})
+
+test('noMatchFallback none keeps only pinned Tools and rejects unsupported strategies', () => {
+    const catalog = [
+        tool('github_issues', { description: 'Search repository issues' }),
+        tool('core_status'),
+        tool('read_file'),
+    ]
+    const visibility = new DeterministicToolVisibility({
+        maxVisibleTools: 1,
+        alwaysVisible: ['core_status'],
+        noMatchFallback: 'none',
+    })
+    assert.deepEqual(visibility.select({ catalog, input: '帮我查看仓库的问题' }), ['core_status'])
+    assert.throws(
+        () => new DeterministicToolVisibility({ noMatchFallback: 'semantic' }),
+        /noMatchFallback must be "all" or "none"/,
+    )
+    assert.throws(
+        () => new DeterministicToolVisibility({ noMatchFallback: 'random' }),
+        /noMatchFallback must be "all" or "none"/,
+    )
 })
 
 test('empty input falls back to all and an empty catalog stays empty', () => {
@@ -163,6 +195,7 @@ test('production routing defaults to all and progressive installs shared activat
     assert.equal(progressive.mode, 'progressive')
     assert.equal(progressive.visibility.constructor.name, 'ProgressiveToolVisibility')
     assert.equal(progressive.visibility.baseVisibility.maxVisibleTools, 5)
+    assert.equal(progressive.visibility.baseVisibility.noMatchFallback, 'none')
     assert.strictEqual(progressive.visibility.activationStore, progressive.activationStore)
     assert.equal(progressive.activationStore.maxActivatedTools, 9)
 })
@@ -180,4 +213,6 @@ test('invalid progressive activation limit and routing mode fail fast', () => {
         () => createToolRoutingFromEnv({ MINI_DSH_TOOL_ROUTING: 'semantic' }),
         /must be "all", "deterministic", or "progressive"/,
     )
+    const deterministic = createToolRoutingFromEnv({ MINI_DSH_TOOL_ROUTING: 'deterministic' })
+    assert.equal(deterministic.visibility.noMatchFallback, 'all')
 })

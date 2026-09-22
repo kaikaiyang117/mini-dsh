@@ -81,7 +81,11 @@ export class AgentLoopRuntime {
         let lastContent = ''
 
         try {
-            await this.toolVisibility.beginRun?.({ runId, sessionId, agent })
+            try {
+                await this.toolVisibility.beginRun?.({ runId, sessionId, agent })
+            } catch {
+                // Run-local visibility setup cannot prevent Agent execution.
+            }
             await this.sessions.append(sessionId, 'user/message', { content: input, runId })
             let step = 0
 

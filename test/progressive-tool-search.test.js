@@ -191,7 +191,7 @@ test('ProgressiveToolVisibility pins search, ignores stale activations, and unio
     )
 })
 
-test('progressive integration discovers, exposes, executes, and clears Tools per Run', async () => {
+test('progressive mode refines a Chinese query, discovers a Tool, and scopes activation to each Run', async () => {
     const root = new Context()
     await root.plugin(toolsPlugin)
     const sessions = new SessionRuntime()
@@ -200,22 +200,26 @@ test('progressive integration discovers, exposes, executes, and clears Tools per
     const agents = new AgentRuntime()
     const session = await sessions.create()
     let targetExecutions = 0
-    register(root.tools, 'task_helper', { description: 'Handle a task request' })
-    register(root.tools, 'weather_lookup', {
-        description: 'Retrieve weather forecasts by city',
+    register(root.tools, 'github_issues_search', {
+        description: 'Search GitHub repository issues',
         execute: async () => {
             targetExecutions += 1
-            return 'sunny'
+            return 'issue list'
         },
     })
-    for (let index = 0; index < 10; index += 1) {
-        register(root.tools, `irrelevant_${index}`, { description: 'unrelated catalog entry' })
+    for (let index = 0; index < 19; index += 1) {
+        register(root.tools, `english_tool_${index}`, {
+            description: `English capability ${index}`,
+        })
     }
 
     const activationStore = new ToolActivationStore({ maxActivatedTools: 4 })
     const toolCatalog = new ToolCatalog({ tools: root.tools })
     await root.plugin(toolSearchPlugin, { toolCatalog, activationStore })
-    const baseVisibility = new DeterministicToolVisibility({ maxVisibleTools: 1 })
+    const baseVisibility = new DeterministicToolVisibility({
+        maxVisibleTools: 5,
+        noMatchFallback: 'none',
+    })
     const toolVisibility = new ProgressiveToolVisibility({ baseVisibility, activationStore })
     const visibilityRequests = []
     const measuredRequests = []
@@ -241,7 +245,7 @@ test('progressive integration discovers, exposes, executes, and clears Tools per
                             {
                                 id: 'search-call',
                                 name: 'tool_search',
-                                arguments: { query: 'weather forecast' },
+                                arguments: { query: 'github issues' },
                             },
                         ],
                     }
@@ -251,8 +255,8 @@ test('progressive integration discovers, exposes, executes, and clears Tools per
                         toolCalls: [
                             {
                                 id: 'weather-call',
-                                name: 'weather_lookup',
-                                arguments: { city: 'Shanghai' },
+                                name: 'github_issues_search',
+                                arguments: {},
                             },
                         ],
                     }
@@ -286,12 +290,11 @@ test('progressive integration discovers, exposes, executes, and clears Tools per
     })
 
     try {
-        assert.equal(await agent.send('task request'), 'done')
+        assert.equal(await agent.send('帮我查看仓库的问题'), 'done')
         assert.equal(targetExecutions, 1)
-        assert.deepEqual(schemaNames(modelRequests[0].tools), ['task_helper', 'tool_search'])
+        assert.deepEqual(schemaNames(modelRequests[0].tools), ['tool_search'])
         assert.deepEqual(schemaNames(modelRequests[1].tools), [
-            'task_helper',
-            'weather_lookup',
+            'github_issues_search',
             'tool_search',
         ])
         for (const [index, request] of modelRequests.entries()) {
@@ -302,8 +305,8 @@ test('progressive integration discovers, exposes, executes, and clears Tools per
         assert.equal(visibilityRequests[1].runId, runId)
         assert.deepEqual(activationStore.names(runId), [])
 
-        assert.equal(await agent.send('task request'), 'done')
-        assert.deepEqual(schemaNames(modelRequests[3].tools), ['task_helper', 'tool_search'])
+        assert.equal(await agent.send('帮我查看仓库的问题'), 'done')
+        assert.deepEqual(schemaNames(modelRequests[3].tools), ['tool_search'])
         assert.notEqual(visibilityRequests[3].runId, runId)
         assert.deepEqual(activationStore.names(visibilityRequests[3].runId), [])
     } finally {
@@ -311,7 +314,7 @@ test('progressive integration discovers, exposes, executes, and clears Tools per
     }
 })
 
-test('visibility cleanup failure cannot change the Agent Run outcome', async () => {
+test('visibility lifecycle failures cannot change the Agent Run outcome', async () => {
     const sessions = new SessionRuntime()
     const systemPrompt = new SystemPromptRuntime()
     const tools = new ToolRuntime()
@@ -338,6 +341,9 @@ test('visibility cleanup failure cannot change the Agent Run outcome', async () 
             llm,
             toolVisibility: {
                 select: () => [],
+                beginRun() {
+                    throw new Error('setup failed')
+                },
                 endRun() {
                     throw new Error('cleanup failed')
                 },

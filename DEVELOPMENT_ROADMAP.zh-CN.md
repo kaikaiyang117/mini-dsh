@@ -992,9 +992,9 @@ hard threshold -> stopReason = no_progress
 
 当前 suites 用本地 Mock 评估 Harness policy / runtime behavior，不代表真实模型或 Coding Benchmark 的效果。
 
-### Phase 10.2 — Context Pressure / Compaction Eval（待办）
+### Phase 10.2 — Context Pressure / Compaction Eval ✅
 
-后续为 Context Pressure / Compaction 建立确定性 Harness Eval，并通过 baseline 比较可量化的上下文与任务结果。Filesystem、long-horizon、Tool / MCP failure、真实模型 benchmark 等评测仍属后续研究，不属于 Phase 10.1。
+已增加离线确定性 Context Pressure Eval，对比 full history、有限窗口 no-compaction baseline 与现有 deterministic compaction，并检查模型请求 token、recent context、Tool protocol 与 durable Event Log invariant。Filesystem、long-horizon、Tool / MCP failure、真实模型 benchmark 等其他评测仍属后续工作；Phase 10 整体尚未完成。
 
 ---
 
@@ -1082,7 +1082,7 @@ Phase 9.1  Deterministic Progress Guard V1 ✅
    ↓
 Phase 10.1 Harness Evaluation Framework V1 ✅
    ↓
-Phase 10.2 Context Pressure / Compaction Eval（待办）
+Phase 10.2 Context Pressure / Compaction Eval ✅
    ↓
 Phase 11 Fault Injection
 ```

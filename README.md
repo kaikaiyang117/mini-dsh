@@ -144,7 +144,7 @@ Reports have `schemaVersion: 1`, suite metadata, ordered variant summaries, and 
 
 Each result keeps this field set: `suiteName`, `caseName`, `variant`, `success`, `error`, `stopReason`, `durationMs`, `steps`, `toolCalls`, `requestCount`, `inputTokens`, `outputTokens`, `reasoningTokens`, `cost`, `visibleToolCount`, `visibleToolCountByStep`, `maxVisibleToolCount`, `toolSchemaTokens`, `toolSchemaTokensByStep`, `estimatedInputTokens`, `estimatedInputTokensByStep`, `targetToolCalled`, `targetToolSucceeded`, and bounded `scoreDetails`.
 
-Run the suites with `pnpm eval:tool-routing` and `pnpm eval:progress`; JSON reports are written to `.eval/tool-routing.json` and `.eval/progress.json`. These local-mock evaluations test Harness policy and runtime behavior; they are not real-model leaderboards or production coding benchmarks. Context pressure / compaction evaluation is planned for Phase 10.2.
+Run the suites with `pnpm eval:tool-routing`, `pnpm eval:progress`, and `pnpm eval:context-pressure`; reports are written to `.eval/tool-routing.json`, `.eval/progress.json`, and `.eval/context-pressure.json`. The Context Pressure suite compares full history, a constrained no-compaction baseline, and deterministic compaction under a 1,900-token context window with 200 reserved output tokens. These offline mock evaluations test Harness policy and runtime behavior; they are not real-model leaderboards or production coding benchmarks.
 
 ## For beginners: write it from scratch
 

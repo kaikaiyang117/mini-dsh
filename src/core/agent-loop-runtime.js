@@ -81,6 +81,7 @@ export class AgentLoopRuntime {
         let lastContent = ''
 
         try {
+            await this.toolVisibility.beginRun?.({ runId, sessionId, agent })
             await this.sessions.append(sessionId, 'user/message', { content: input, runId })
             let step = 0
 
@@ -332,6 +333,11 @@ export class AgentLoopRuntime {
             stopReason = /cancelled/i.test(error?.message ?? '') ? 'cancelled' : 'internal_error'
             throw error
         } finally {
+            try {
+                await this.toolVisibility.endRun?.({ runId, sessionId, agent })
+            } catch {
+                // Run-local visibility cleanup cannot change the Agent outcome.
+            }
             deadline.dispose()
             const finalState = controller.snapshot()
             try {

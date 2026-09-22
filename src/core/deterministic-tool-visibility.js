@@ -1,5 +1,8 @@
 export const DEFAULT_MAX_VISIBLE_TOOLS = 12
-export const DEFAULT_MINIMUM_TOOL_SCORE = 1
+
+import { DEFAULT_MINIMUM_TOOL_SCORE, rankTools } from './tool-ranking.js'
+
+export { DEFAULT_MINIMUM_TOOL_SCORE }
 
 export class DeterministicToolVisibility {
     constructor({
@@ -19,18 +22,10 @@ export class DeterministicToolVisibility {
         if (catalog.length === 0) return []
         if (catalog.length <= this.maxVisibleTools) return names
 
-        const queryTokens = tokenize(input)
-        if (queryTokens.length === 0) return names
+        if (String(input ?? '').trim() === '') return names
 
         const pinned = new Set(names.filter((name) => this.alwaysVisible.includes(name)))
-        const query = queryTokens.join(' ')
-        const scored = catalog
-            .map((tool, index) => ({
-                name: tool.name,
-                index,
-                score: scoreTool(tool, queryTokens, query),
-            }))
-            .filter(({ score }) => score >= this.minimumScore && score > 0)
+        const scored = rankTools(catalog, input, { minimumScore: this.minimumScore })
 
         if (scored.length === 0) return names
 
@@ -61,48 +56,4 @@ function normalizeMinimumScore(value) {
         throw new TypeError('minimumScore must be a non-negative finite number')
     }
     return value
-}
-
-function scoreTool(tool, queryTokens, normalizedQuery) {
-    const nameTokens = tokenize(tool.name)
-    const descriptionTokens = new Set(tokenize(tool.description))
-    const parameterTokens = new Set(tokenize(propertyNames(tool.parameters)))
-    const nameSet = new Set(nameTokens)
-
-    let score = nameTokens.join(' ') === normalizedQuery ? 100 : 0
-    for (const token of queryTokens) {
-        if (nameSet.has(token)) score += 10
-        if (descriptionTokens.has(token)) score += 3
-        if (parameterTokens.has(token)) score += 1
-    }
-    return score
-}
-
-function tokenize(value) {
-    return [
-        ...new Set(
-            String(value ?? '')
-                .toLowerCase()
-                .match(/[a-z0-9]+/g) ?? [],
-        ),
-    ]
-}
-
-function propertyNames(schema, names = []) {
-    if (!schema || typeof schema !== 'object') return names
-    if (Array.isArray(schema)) {
-        for (const item of schema) propertyNames(item, names)
-        return names
-    }
-
-    if (schema.properties && typeof schema.properties === 'object') {
-        for (const [name, property] of Object.entries(schema.properties)) {
-            names.push(name)
-            propertyNames(property, names)
-        }
-    }
-    for (const [key, value] of Object.entries(schema)) {
-        if (key !== 'properties') propertyNames(value, names)
-    }
-    return names
 }

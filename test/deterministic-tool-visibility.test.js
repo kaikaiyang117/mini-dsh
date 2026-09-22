@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { DeterministicToolVisibility } from '../src/core/deterministic-tool-visibility.js'
-import { toolVisibilityFromEnv } from '../src/core/tool-visibility-config.js'
+import { rankTools } from '../src/core/tool-ranking.js'
+import {
+    createToolRoutingFromEnv,
+    toolVisibilityFromEnv,
+} from '../src/core/tool-visibility-config.js'
 
 function tool(name, { description = '', properties = {} } = {}) {
     return {
@@ -125,4 +129,55 @@ test('production visibility defaults to all and enables deterministic routing ex
     assert.equal(all.constructor.name, 'AllToolsVisibility')
     assert.equal(deterministic.constructor.name, 'DeterministicToolVisibility')
     assert.equal(deterministic.maxVisibleTools, 7)
+})
+
+test('DeterministicToolVisibility selects from the shared ranking primitive', () => {
+    const catalog = [
+        tool('name_match', { description: 'special capability' }),
+        tool('description_match', { description: 'special capability' }),
+        tool('other'),
+    ]
+    const visibility = new DeterministicToolVisibility({ maxVisibleTools: 1 })
+    const ranking = rankTools(catalog, 'special capability')
+
+    assert.deepEqual(visibility.select({ catalog, input: 'special capability' }), [ranking[0].name])
+    assert.deepEqual(
+        ranking.map(({ name, index }) => [name, index]),
+        [
+            ['name_match', 0],
+            ['description_match', 1],
+        ],
+    )
+})
+
+test('production routing defaults to all and progressive installs shared activation wiring', () => {
+    const disabled = createToolRoutingFromEnv({})
+    assert.equal(disabled.mode, 'all')
+    assert.equal(disabled.activationStore, null)
+
+    const progressive = createToolRoutingFromEnv({
+        MINI_DSH_TOOL_ROUTING: 'progressive',
+        MINI_DSH_MAX_VISIBLE_TOOLS: '5',
+        MINI_DSH_MAX_ACTIVATED_TOOLS: '9',
+    })
+    assert.equal(progressive.mode, 'progressive')
+    assert.equal(progressive.visibility.constructor.name, 'ProgressiveToolVisibility')
+    assert.equal(progressive.visibility.baseVisibility.maxVisibleTools, 5)
+    assert.strictEqual(progressive.visibility.activationStore, progressive.activationStore)
+    assert.equal(progressive.activationStore.maxActivatedTools, 9)
+})
+
+test('invalid progressive activation limit and routing mode fail fast', () => {
+    assert.throws(
+        () =>
+            createToolRoutingFromEnv({
+                MINI_DSH_TOOL_ROUTING: 'progressive',
+                MINI_DSH_MAX_ACTIVATED_TOOLS: '0',
+            }),
+        /MINI_DSH_MAX_ACTIVATED_TOOLS must be a positive integer/,
+    )
+    assert.throws(
+        () => createToolRoutingFromEnv({ MINI_DSH_TOOL_ROUTING: 'semantic' }),
+        /must be "all", "deterministic", or "progressive"/,
+    )
 })

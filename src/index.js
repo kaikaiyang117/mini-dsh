@@ -3,8 +3,9 @@ import dotenv from 'dotenv'
 import { contextPolicyFromEnv } from './core/context-policy-config.js'
 import { CostEstimator, pricingFromEnv } from './core/cost-estimator.js'
 import { runPolicyFromEnv } from './core/run-policy-config.js'
+import { ToolCatalog } from './core/tool-catalog.js'
 import { maxParallelToolCallsFromEnv } from './core/tool-scheduler.js'
-import { toolVisibilityFromEnv } from './core/tool-visibility-config.js'
+import { createToolRoutingFromEnv } from './core/tool-visibility-config.js'
 import * as deepseek from './models/deepseek.js'
 import * as agentLoop from './plugins/agent-loop.js'
 import * as agents from './plugins/agents.js'
@@ -20,6 +21,7 @@ import * as tools from './plugins/tools.js'
 import * as trace from './plugins/trace.js'
 import * as bash from './tools/bash.js'
 import * as files from './tools/files.js'
+import * as toolSearch from './tools/tool-search.js'
 
 // Load .env before plugins and plugin config that read environment variables.
 dotenv.config()
@@ -35,6 +37,11 @@ await root.plugin(sessions, {
 })
 await root.plugin(systemPrompt)
 await root.plugin(tools)
+const routing = createToolRoutingFromEnv()
+const toolCatalog = new ToolCatalog({ tools: root.tools })
+if (routing.activationStore) {
+    await root.plugin(toolSearch, { toolCatalog, activationStore: routing.activationStore })
+}
 await root.plugin(mcp, { servers: mcpConfig })
 await root.plugin(llm)
 await root.plugin(trace)
@@ -46,7 +53,8 @@ await root.plugin(agentLoop, {
         pricing: pricingFromEnv(process.env.MINI_DSH_PRICING_JSON),
     }),
     maxParallelToolCalls: maxParallelToolCallsFromEnv(),
-    toolVisibility: toolVisibilityFromEnv(),
+    toolCatalog,
+    toolVisibility: routing.visibility,
 })
 
 await root.plugin(runtimeContext, { workspace })

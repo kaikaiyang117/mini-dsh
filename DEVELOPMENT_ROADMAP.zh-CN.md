@@ -904,7 +904,9 @@ CLI 可增加：
 
 Phase 8.1 已建立 Tool Catalog 与 Per-Step Visibility 基础边界：AgentLoop 每个 Step 从当前 ToolRuntime 创建快照，由 Visibility 选择 Model-visible schemas；默认策略仍暴露全部已注册 Tool。该边界不承担授权。
 
-Phase 8.2 已增加 opt-in Deterministic Tool Routing：基于 ASCII lexical overlap 对名称、描述和 Schema property 名评分；默认仍为全量可见，无可靠命中时回退全部 Tool。它不提供跨语言语义、同义词或 intent tracking。以下是后续 Search、Lazy MCP 等阶段目标。
+Phase 8.2 已增加 opt-in Deterministic Tool Routing：基于 ASCII lexical overlap 对名称、描述和 Schema property 名评分；默认仍为全量可见，无可靠命中时回退全部 Tool。它不提供跨语言语义、同义词或 intent tracking。
+
+Phase 8.3 已实现 Progressive Tool Search：`progressive` 模式将确定性基础可见集合、固定可见的 `tool_search` 与 Run-scoped activation 合并；搜索完整的当前注册 Tool Catalog，命中只会在下一 Step 暴露，Run 结束清理激活，并受 `MINI_DSH_MAX_ACTIVATED_TOOLS` 限制。搜索仍是 ASCII lexical matching；当前阶段不连接未启动 MCP Server。后续 Lazy MCP 与 Evaluation 仍未实现。
 
 问题：随着 MCP Server / Tool 数量增长，如果所有 Tool Schema 每轮都发送给模型，会增加上下文开销并引入无关候选。
 

@@ -26,6 +26,7 @@ jobs:
                     - eval:progress
                     - eval:context-pressure
                     - eval:long-horizon
+                    - eval:fault-injection
         steps:
             - name: Check out repository
               uses: actions/checkout@v4

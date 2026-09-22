@@ -1004,28 +1004,19 @@ hard threshold -> stopReason = no_progress
 
 # 17. Phase 11：Fault Injection
 
-注入：
+### Phase 11.1 — Core Runtime Fault Injection ✅
 
-```text
-LLM 429 / 500 / timeout
-invalid tool call
-Tool exception / timeout
-MCP disconnect / restart
-cancel during multi-tool step
-process crash after committed event
-context overflow
-```
+离线 deterministic in-process Eval 覆盖 LLM provider 500、LLM pending 时外部取消、Tool exception recovery / failure limit、Tool timeout、invalid / unknown Tool call、并行 Tool 取消、context overflow、已提交 Tool Call 后 Scheduler dispatch failure，以及 side-effect 不重试。Scorer 检查 Stop Reason、Trace、Session Event Log 和每个 Tool Call 恰好对应一个 Tool Result。Scheduler 在 Tool Call 提交后抛错曾导致 orphan call；现已添加最小的 synthetic Tool Result 补齐逻辑及生产回归测试。
 
-验证：
+本阶段没有 provider timeout policy，因此 LLM pending 用例验证外部取消，不声称验证真实 Provider timeout。Eval 使用 Mock LLM，不访问真实网络，也不是 production chaos testing。
 
-```text
-Session Log 是否保持可恢复
-Tool Call / Result 是否保持协议一致
-是否重复执行副作用
-Run Stop Reason 是否正确
-Resume 后是否继续
-Trace 是否能够解释失败路径
-```
+### Phase 11.2 — Crash / Resume / Side-effect Recovery 待办
+
+后续验证进程崩溃与恢复边界、Resume 后的 side-effect 不确定性；本阶段没有测试 crash-resume exactly-once。
+
+### Phase 11.3 — MCP Failure 待办
+
+后续验证 MCP disconnect / restart。Phase 11 整体仍未完成。
 
 ---
 
@@ -1088,7 +1079,11 @@ Phase 10.1 Harness Evaluation Framework V1 ✅
    ↓
 Phase 10.2 Context Pressure / Compaction Eval ✅
    ↓
-Phase 11 Fault Injection
+Phase 11.1 Core Runtime Fault Injection ✅
+   ↓
+Phase 11.2 Crash / Resume / Side-effect Recovery 待办
+   ↓
+Phase 11.3 MCP Failure 待办
 ```
 
 不要同时让 Coding Agent 修改多个 Phase。
@@ -1186,12 +1181,12 @@ Git 历史应成为“从最小 Harness 一层层做出工程能力”的直接�
 [x] 长 Session 支持 Token-aware Compaction
 [x] MCP Server 有 Harness 级生命周期视图
 [x] 大规模 Tool 支持 Progressive Disclosure
-[ ] 可以检测重复/无进展执行
+[x] 可以检测重复/无进展执行
 [x] 每个 Run 有结构化 Trace
-[ ] 有可重复 Eval Suite
-[ ] 有 Fault Injection Cases
-[ ] 所有优化都有 Baseline 数据
-[ ] Git 历史可以清楚看到每个模块独立实现过程
+[x] 有可重复 Eval Suite
+[x] 有 Fault Injection Cases（Phase 11.1 范围）
+[x] Tool Routing、Progress、Context Pressure 与 Long-Horizon 有可重复 Baseline 数据
+[x] Git 历史可以清楚看到每个模块独立实现过程
 ```
 
 当以上核心项完成后，这个项目不再只是“学习 mini-dsh”，而是一套有清晰设计边界、可解释故障语义、可量化实验结果的轻量级 Coding Agent Harness。

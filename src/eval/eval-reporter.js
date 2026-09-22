@@ -7,6 +7,12 @@ export async function writeJsonReport(report, path) {
 }
 
 export function renderMarkdownTable({ headers, rows }) {
+    if (!Array.isArray(headers) || headers.length === 0 || !Array.isArray(rows)) {
+        throw new TypeError('Markdown table requires non-empty headers and a rows array')
+    }
+    if (rows.some((row) => !Array.isArray(row) || row.length !== headers.length)) {
+        throw new TypeError('Markdown table rows must match the header column count')
+    }
     const cells = [headers, ...rows].map((row) => row.map((value) => escapeCell(value)))
     const widths = headers.map((_, column) => Math.max(...cells.map((row) => row[column].length)))
     const format = (row) =>

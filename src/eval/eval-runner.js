@@ -121,81 +121,73 @@ export class EvalRunner {
             )
         }
 
-        if (
-            !fixture?.agent ||
-            typeof fixture.agent.send !== 'function' ||
-            typeof fixture.trace?.latest !== 'function' ||
-            !Array.isArray(fixture.recordingTokenMeter?.requests)
-        ) {
-            return failedResult(
-                this.suiteName,
-                evalCase,
-                variant,
-                performance.now() - startedAt,
+        let error = null
+        let trace = null
+        let score = { success: false }
+        const fixtureIsValid = isValidFixture(fixture)
+
+        if (!fixtureIsValid) {
+            error = normalizeError(
                 new TypeError(
-                    'Eval fixture must expose agent, trace.latest(), and token meter requests',
+                    'Eval fixture must expose agent.send(), trace.latest(), token meter requests, and an optional dispose() function',
                 ),
             )
+        } else {
+            try {
+                await fixture.agent.send(evalCase.prompt)
+            } catch (caught) {
+                error = normalizeError(caught)
+            }
         }
 
-        let error = null
         try {
-            await fixture.agent.send(evalCase.prompt)
+            trace = typeof fixture?.trace?.latest === 'function' ? fixture.trace.latest() : null
         } catch (caught) {
-            error = normalizeError(caught)
-        } finally {
+            error ??= normalizeError(caught)
+        }
+        if (!trace) {
+            error ??= normalizeError(
+                new Error(`Eval fixture did not capture a Trace for ${evalCase.name}/${variant}`),
+            )
+        } else if (fixtureIsValid) {
             try {
-                await fixture.dispose?.()
+                score = (evalCase.scorer ?? this.scorer)({
+                    trace,
+                    expected: evalCase.expected,
+                    variant,
+                    evalCase,
+                    fixture,
+                })
             } catch (caught) {
                 error ??= normalizeError(caught)
             }
         }
 
-        const trace = fixture.trace.latest()
-        if (!trace) {
-            return failedResult(
-                this.suiteName,
-                evalCase,
-                variant,
-                performance.now() - startedAt,
-                error ??
-                    new Error(
-                        `Eval fixture did not capture a Trace for ${evalCase.name}/${variant}`,
-                    ),
-            )
-        }
-        let score = { success: false }
-        try {
-            score = (evalCase.scorer ?? this.scorer)({
-                trace,
-                expected: evalCase.expected,
-                variant,
-                evalCase,
-                fixture,
-            })
-        } catch (caught) {
-            error ??= normalizeError(caught)
-        }
-        const requests = fixture.recordingTokenMeter.requests
+        const requests = Array.isArray(fixture?.recordingTokenMeter?.requests)
+            ? fixture.recordingTokenMeter.requests
+            : []
         const visibleToolCountByStep = requests.map((request) => request.visibleToolCount)
         // Total tool exposure across model requests, not a count of distinct tools.
         const visibleToolCount = visibleToolCountByStep.reduce((total, count) => total + count, 0)
         const toolSchemaTokensByStep = requests.map((request) => request.toolSchemaTokens)
         const estimatedInputTokensByStep = requests.map((request) => request.estimatedInputTokens)
 
-        return {
+        const result = {
             suiteName: this.suiteName,
             caseName: evalCase.name,
             variant,
-            success: !error && score.success,
-            durationMs: trace.durationMs,
-            steps: trace.steps.length,
-            toolCalls: trace.steps.reduce((total, step) => total + step.toolCalls.length, 0),
-            inputTokens: trace.usage.inputTokens,
-            outputTokens: trace.usage.outputTokens,
-            reasoningTokens: trace.usage.reasoningTokens,
-            cost: trace.usage.cost,
-            stopReason: trace.stopReason,
+            success: !error && Boolean(score.success),
+            durationMs: trace?.durationMs ?? 0,
+            steps: trace?.steps?.length ?? 0,
+            toolCalls: (trace?.steps ?? []).reduce(
+                (total, step) => total + (step.toolCalls?.length ?? 0),
+                0,
+            ),
+            inputTokens: trace?.usage?.inputTokens ?? null,
+            outputTokens: trace?.usage?.outputTokens ?? null,
+            reasoningTokens: trace?.usage?.reasoningTokens ?? null,
+            cost: trace?.usage?.cost ?? null,
+            stopReason: trace?.stopReason ?? 'internal_error',
             requestCount: requests.length,
             visibleToolCount,
             visibleToolCountByStep,
@@ -210,12 +202,30 @@ export class EvalRunner {
                 0,
             ),
             estimatedInputTokensByStep,
-            targetToolCalled: score.targetToolCalled ?? false,
-            targetToolSucceeded: score.targetToolSucceeded ?? false,
-            scoreDetails: boundedJsonValue(score.details),
+            targetToolCalled: score?.targetToolCalled ?? false,
+            targetToolSucceeded: score?.targetToolSucceeded ?? false,
+            scoreDetails: boundedJsonValue(score?.details),
             error,
         }
+
+        try {
+            if (typeof fixture?.dispose === 'function') await fixture.dispose()
+        } catch (caught) {
+            result.error = normalizeError(caught)
+        }
+        result.success = result.success && !result.error
+        return result
     }
+}
+
+function isValidFixture(fixture) {
+    return Boolean(
+        fixture?.agent &&
+            typeof fixture.agent.send === 'function' &&
+            typeof fixture.trace?.latest === 'function' &&
+            Array.isArray(fixture.recordingTokenMeter?.requests) &&
+            (fixture.dispose === undefined || typeof fixture.dispose === 'function'),
+    )
 }
 
 function failedResult(suiteName, evalCase, variant, durationMs, error) {

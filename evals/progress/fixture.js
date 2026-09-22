@@ -110,7 +110,7 @@ export async function createProgressFixture({ evalCase, variant, limits = {} }) 
         llm,
         trace,
         contextManager,
-        policy: { maxSteps: limits.maxSteps ?? 20 },
+        policy: { maxSteps: 20, ...limits },
         progressDetectorFactory,
     })
     const agent = agents.create({
@@ -123,7 +123,7 @@ export async function createProgressFixture({ evalCase, variant, limits = {} }) 
         agent,
         trace,
         recordingTokenMeter,
-        inspectors: { llmRequests, sessions, session, state },
+        inspectors: { llmRequests, sessions, session, state, loop },
         async dispose() {},
     }
 }

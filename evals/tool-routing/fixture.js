@@ -17,7 +17,7 @@ import * as toolSearchPlugin from '../../src/tools/tool-search.js'
 
 const MAX_VISIBLE_TOOLS = 6
 
-export async function createToolRoutingFixture({ evalCase, variant, limits: _limits = {} }) {
+export async function createToolRoutingFixture({ evalCase, variant, limits = {} }) {
     if (!['all', 'deterministic', 'progressive'].includes(variant)) {
         throw new TypeError(`unsupported routing variant: ${variant}`)
     }
@@ -136,6 +136,7 @@ export async function createToolRoutingFixture({ evalCase, variant, limits: _lim
             llm,
             trace,
             contextManager,
+            policy: { ...limits },
             toolCatalog,
             toolVisibility,
         })
@@ -149,7 +150,7 @@ export async function createToolRoutingFixture({ evalCase, variant, limits: _lim
             agent,
             trace,
             recordingTokenMeter,
-            inspectors: { llmRequests },
+            inspectors: { llmRequests, loop },
             async dispose() {
                 await root.fiber.dispose()
             },

@@ -10,6 +10,14 @@ export const EVAL_LIMIT_KEYS = Object.freeze([
     'maxToolFailures',
 ])
 
+const INTEGER_EVAL_LIMIT_KEYS = new Set([
+    'maxSteps',
+    'maxToolCalls',
+    'maxInputTokens',
+    'maxOutputTokens',
+    'maxToolFailures',
+])
+
 export class EvalSuite {
     constructor({
         name,
@@ -100,7 +108,8 @@ export function isValidEvalCase(item) {
                 !EVAL_LIMIT_KEYS.includes(key) ||
                 typeof value !== 'number' ||
                 !Number.isFinite(value) ||
-                value < 0,
+                value < 0 ||
+                (INTEGER_EVAL_LIMIT_KEYS.has(key) && !Number.isInteger(value)),
         )
     )
         return false

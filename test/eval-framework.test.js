@@ -3,6 +3,10 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { PROGRESS_CASES } from '../evals/progress/cases.js'
+import { createProgressFixture } from '../evals/progress/fixture.js'
+import { TOOL_ROUTING_CASES } from '../evals/tool-routing/cases.js'
+import { createToolRoutingFixture } from '../evals/tool-routing/fixture.js'
 import { RecordingTokenMeter } from '../src/eval/eval-metrics.js'
 import { renderMarkdownTable, writeJsonReport } from '../src/eval/eval-reporter.js'
 import { EvalRunner, normalizeEvalReportForDeterminism } from '../src/eval/eval-runner.js'
@@ -53,6 +57,13 @@ test('EvalCase validation covers completion and limits contracts', () => {
         () => make({ ...validCase, expected: { completion: 'stop-reason' } }),
         /invalid EvalCase/,
     )
+    assert.throws(() => make({ ...validCase, limits: { maxSteps: 1.5 } }), /invalid EvalCase/)
+    assert.throws(
+        () => make({ ...validCase, limits: { maxToolCalls: Number.NaN } }),
+        /invalid EvalCase/,
+    )
+    assert.doesNotThrow(() => make({ ...validCase, limits: { maxCost: 1.5 } }))
+    assert.doesNotThrow(() => make({ ...validCase, limits: { maxDurationMs: 100.5 } }))
 })
 
 test('failed cases are isolated and later EvalCases still execute', async () => {
@@ -167,35 +178,210 @@ test('JSON reporter writes a parseable report and Markdown rendering is stable',
 })
 
 test('dispose failure is recorded while retaining the EvalResult metrics', async () => {
+    let disposed = false
     const report = await new EvalRunner({
         suiteName: 'dispose',
         cases: [validCase],
         variants: ['v'],
         fixtureFactory: async () => ({
-            ...fixture(),
+            ...fixture({
+                requests: [{ visibleToolCount: 2, toolSchemaTokens: 12, estimatedInputTokens: 30 }],
+            }),
             async dispose() {
+                disposed = true
                 throw new Error('dispose failed')
+            },
+        }),
+        scorer: ({ fixture: liveFixture }) => {
+            assert.equal(disposed, false)
+            assert.equal(liveFixture.inspectors.state, 'live')
+            return { success: true, details: { scored: true } }
+        },
+    }).run()
+    assert.equal(report.results.length, 1)
+    assert.equal(report.results[0].steps, 1)
+    assert.equal(report.results[0].toolCalls, 1)
+    assert.equal(report.results[0].requestCount, 1)
+    assert.equal(report.results[0].visibleToolCount, 2)
+    assert.equal(report.results[0].toolSchemaTokens, 12)
+    assert.equal(report.results[0].estimatedInputTokens, 30)
+    assert.deepEqual(report.results[0].scoreDetails, { scored: true })
+    assert.equal(report.results[0].success, false)
+    assert.equal(report.results[0].error.message, 'dispose failed')
+    assert.equal(disposed, true)
+})
+
+test('fixture remains live throughout scoring and is disposed once afterward', async () => {
+    const lifecycle = []
+    const report = await new EvalRunner({
+        suiteName: 'lifecycle',
+        cases: [validCase],
+        variants: ['v'],
+        fixtureFactory: async () => ({
+            ...fixture(),
+            inspectors: { state: 'live' },
+            async dispose() {
+                lifecycle.push('dispose')
+            },
+        }),
+        scorer: ({ fixture: liveFixture }) => {
+            lifecycle.push('score')
+            assert.equal(liveFixture.inspectors.state, 'live')
+            return { success: true }
+        },
+    }).run()
+    assert.equal(report.results[0].success, true)
+    assert.deepEqual(lifecycle, ['score', 'dispose'])
+})
+
+test('agent.send failure still disposes a created fixture once', async () => {
+    let disposeCount = 0
+    const report = await new EvalRunner({
+        cases: [validCase],
+        variants: ['v'],
+        fixtureFactory: async () => ({
+            ...fixture(),
+            agent: {
+                async send() {
+                    throw new Error('send failed')
+                },
+            },
+            async dispose() {
+                disposeCount += 1
             },
         }),
         scorer: () => ({ success: true }),
     }).run()
-    assert.equal(report.results.length, 1)
-    assert.equal(report.results[0].steps, 1)
+    assert.equal(disposeCount, 1)
     assert.equal(report.results[0].success, false)
-    assert.equal(report.results[0].error.message, 'dispose failed')
+    assert.equal(report.results[0].steps, 1)
+    assert.equal(report.results[0].error.message, 'send failed')
 })
 
-function fixture() {
+test('scorer failure still disposes a created fixture once and preserves trace metrics', async () => {
+    let disposeCount = 0
+    const report = await new EvalRunner({
+        cases: [validCase],
+        variants: ['v'],
+        fixtureFactory: async () => ({
+            ...fixture(),
+            async dispose() {
+                disposeCount += 1
+            },
+        }),
+        scorer: () => {
+            throw new Error('score failed')
+        },
+    }).run()
+    assert.equal(disposeCount, 1)
+    assert.equal(report.results[0].success, false)
+    assert.equal(report.results[0].steps, 1)
+    assert.equal(report.results[0].error.message, 'score failed')
+})
+
+test('invalid fixture is disposed when possible instead of returning before cleanup', async () => {
+    let disposeCount = 0
+    const report = await new EvalRunner({
+        cases: [validCase],
+        variants: ['v'],
+        fixtureFactory: async () => ({
+            ...fixture(),
+            agent: {},
+            async dispose() {
+                disposeCount += 1
+            },
+        }),
+    }).run()
+    assert.equal(disposeCount, 1)
+    assert.equal(report.results[0].success, false)
+    assert.match(report.results[0].error.message, /Eval fixture must expose/)
+})
+
+test('missing trace still disposes a created fixture once', async () => {
+    let disposeCount = 0
+    const report = await new EvalRunner({
+        cases: [validCase],
+        variants: ['v'],
+        fixtureFactory: async () => ({
+            ...fixture(),
+            trace: { latest: () => null },
+            async dispose() {
+                disposeCount += 1
+            },
+        }),
+    }).run()
+    assert.equal(disposeCount, 1)
+    assert.equal(report.results[0].success, false)
+    assert.equal(report.results[0].error.message, 'Eval fixture did not capture a Trace for one/v')
+})
+
+test('both existing fixture factories apply every supported limit and preserve defaults', async () => {
+    const limits = {
+        maxSteps: 4,
+        maxToolCalls: 5,
+        maxInputTokens: 6,
+        maxOutputTokens: 7,
+        maxDurationMs: 100.5,
+        maxCost: 1.5,
+        maxToolFailures: 8,
+    }
+    const routing = await createToolRoutingFixture({
+        evalCase: TOOL_ROUTING_CASES[0],
+        variant: 'all',
+        limits,
+    })
+    const progress = await createProgressFixture({
+        evalCase: PROGRESS_CASES[0],
+        variant: 'baseline',
+        limits,
+    })
+    try {
+        assert.deepEqual(routing.inspectors.loop.policy, limits)
+        assert.deepEqual(progress.inspectors.loop.policy, { maxSteps: 4, ...limits })
+    } finally {
+        await routing.dispose()
+        await progress.dispose()
+    }
+
+    const routingDefault = await createToolRoutingFixture({
+        evalCase: TOOL_ROUTING_CASES[0],
+        variant: 'all',
+    })
+    const progressDefault = await createProgressFixture({
+        evalCase: PROGRESS_CASES[0],
+        variant: 'baseline',
+    })
+    try {
+        assert.deepEqual(routingDefault.inspectors.loop.policy, {})
+        assert.deepEqual(progressDefault.inspectors.loop.policy, { maxSteps: 20 })
+    } finally {
+        await routingDefault.dispose()
+        await progressDefault.dispose()
+    }
+})
+
+test('Markdown table rejects malformed headers and rows with TypeError', () => {
+    assert.throws(() => renderMarkdownTable({ headers: [], rows: [] }), TypeError)
+    assert.throws(() => renderMarkdownTable({ headers: ['a'], rows: [['a', 'b']] }), TypeError)
+})
+
+function fixture({ requests = [] } = {}) {
     return {
         agent: { async send() {} },
         trace: {
             latest: () => ({
                 durationMs: 1,
-                steps: [{ toolCalls: [] }],
+                steps: [{ toolCalls: [{ name: 'target', status: 'completed' }] }],
                 stopReason: 'completed',
                 usage: { inputTokens: null, outputTokens: null, reasoningTokens: null, cost: null },
             }),
         },
-        recordingTokenMeter: new RecordingTokenMeter(),
+        recordingTokenMeter: {
+            ...new RecordingTokenMeter(),
+            get requests() {
+                return requests
+            },
+        },
+        inspectors: { state: 'live' },
     }
 }

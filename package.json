@@ -16,6 +16,7 @@
         "eval:tool-routing": "node scripts/eval-tool-routing.js",
         "eval:progress": "node scripts/eval-progress.js",
         "eval:context-pressure": "node scripts/eval-context-pressure.js",
+        "eval:long-horizon": "node scripts/eval-long-horizon.js",
         "lint:fix": "biome check --write .",
         "format": "biome format --write ."
     },

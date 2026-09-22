@@ -144,7 +144,9 @@ Report 带有 `schemaVersion: 1`、Suite metadata、有序 variant 汇总和稳�
 
 每个结果固定保留这些字段：`suiteName`、`caseName`、`variant`、`success`、`error`、`stopReason`、`durationMs`、`steps`、`toolCalls`、`requestCount`、`inputTokens`、`outputTokens`、`reasoningTokens`、`cost`、`visibleToolCount`、`visibleToolCountByStep`、`maxVisibleToolCount`、`toolSchemaTokens`、`toolSchemaTokensByStep`、`estimatedInputTokens`、`estimatedInputTokensByStep`、`targetToolCalled`、`targetToolSucceeded` 和有界 `scoreDetails`。
 
-运行 `pnpm eval:tool-routing`、`pnpm eval:progress` 和 `pnpm eval:context-pressure`，报告分别写入 `.eval/tool-routing.json`、`.eval/progress.json` 和 `.eval/context-pressure.json`。Context Pressure suite 在 1,900 token context window（预留 200 output tokens）下比较 full history、有限窗口但不 compaction、以及 deterministic compaction。这些离线 Mock Eval 用于测试 Harness policy 和 runtime behavior，不是生产模型排行榜或真实 Coding Benchmark。
+运行 `pnpm eval:tool-routing`、`pnpm eval:progress`、`pnpm eval:context-pressure` 和 `pnpm eval:long-horizon`，报告分别写入 `.eval/tool-routing.json`、`.eval/progress.json`、`.eval/context-pressure.json` 和 `.eval/long-horizon.json`。Long-Horizon 是在一次性本地仓库中运行的 deterministic synthetic coding workflow，使用 Mock LLM 比较 baseline 与 managed Harness；它不是 SWE-bench、HumanEval 或真实模型 Coding Benchmark。Context Pressure suite 在 1,900 token context window（预留 200 output tokens）下比较 full history、有限窗口但不 compaction、以及 deterministic compaction。这些离线 Mock Eval 用于测试 Harness policy 和 runtime behavior，不是生产模型排行榜或真实 Coding Benchmark。
+
+生产 `SandboxRuntime` 目前是应用层 policy gate，不是操作系统级隔离。
 
 ## 给新手：从零手写
 

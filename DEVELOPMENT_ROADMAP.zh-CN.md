@@ -994,7 +994,11 @@ hard threshold -> stopReason = no_progress
 
 ### Phase 10.2 — Context Pressure / Compaction Eval ✅
 
-已增加离线确定性 Context Pressure Eval，对比 full history、有限窗口 no-compaction baseline 与现有 deterministic compaction，并检查模型请求 token、recent context、Tool protocol 与 durable Event Log invariant。Filesystem、long-horizon、Tool / MCP failure、真实模型 benchmark 等其他评测仍属后续工作；Phase 10 整体尚未完成。
+已增加离线确定性 Context Pressure Eval，对比 full history、有限窗口 no-compaction baseline 与现有 deterministic compaction，并检查模型请求 token、recent context、Tool protocol 与 durable Event Log invariant。Tool / MCP failure 与真实模型 benchmark 等评测仍属后续工作。
+
+### Phase 10.3 — Long-Horizon Filesystem Coding Eval V1 ✅
+
+使用 disposable 临时仓库、生产 Filesystem / Bash Tools 与 deterministic Mock LLM，完成 targeted bug fix、cross-file change、首次失败搜索恢复、失败编辑恢复和 large-context compaction 五个用例。baseline 与 managed 均通过 workspace scorer 与 Node 测试，Tool Call / Result protocol 完整；managed 在 large-context 用例发生 compaction 并降低 peak request input。该 suite 是 synthetic Harness execution Eval，不是 SWE-bench、HumanEval 或真实模型 benchmark。SandboxRuntime 仍只是应用层 policy gate，并非 OS 隔离。
 
 ---
 

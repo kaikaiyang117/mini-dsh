@@ -144,7 +144,9 @@ Reports have `schemaVersion: 1`, suite metadata, ordered variant summaries, and 
 
 Each result keeps this field set: `suiteName`, `caseName`, `variant`, `success`, `error`, `stopReason`, `durationMs`, `steps`, `toolCalls`, `requestCount`, `inputTokens`, `outputTokens`, `reasoningTokens`, `cost`, `visibleToolCount`, `visibleToolCountByStep`, `maxVisibleToolCount`, `toolSchemaTokens`, `toolSchemaTokensByStep`, `estimatedInputTokens`, `estimatedInputTokensByStep`, `targetToolCalled`, `targetToolSucceeded`, and bounded `scoreDetails`.
 
-Run the suites with `pnpm eval:tool-routing`, `pnpm eval:progress`, and `pnpm eval:context-pressure`; reports are written to `.eval/tool-routing.json`, `.eval/progress.json`, and `.eval/context-pressure.json`. The Context Pressure suite compares full history, a constrained no-compaction baseline, and deterministic compaction under a 1,900-token context window with 200 reserved output tokens. These offline mock evaluations test Harness policy and runtime behavior; they are not real-model leaderboards or production coding benchmarks.
+Run the suites with `pnpm eval:tool-routing`, `pnpm eval:progress`, `pnpm eval:context-pressure`, and `pnpm eval:long-horizon`; reports are written to `.eval/tool-routing.json`, `.eval/progress.json`, `.eval/context-pressure.json`, and `.eval/long-horizon.json`. Long-Horizon is a deterministic synthetic coding workflow over disposable local repositories. It compares baseline and managed Harness settings using a Mock LLM; it is not SWE-bench, HumanEval, or a real-model coding benchmark. The Context Pressure suite compares full history, a constrained no-compaction baseline, and deterministic compaction under a 1,900-token context window with 200 reserved output tokens. These offline mock evaluations test Harness policy and runtime behavior; they are not real-model leaderboards or production coding benchmarks.
+
+The production `SandboxRuntime` is an application-level policy gate, not operating-system isolation.
 
 ## For beginners: write it from scratch
 

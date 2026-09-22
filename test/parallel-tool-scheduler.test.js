@@ -317,6 +317,236 @@ test('scheduler failure after tool-call commit appends one synthetic result per 
     assert.equal(executions, 0)
 })
 
+test('scheduler failure after a settled call preserves its real result and skips remaining calls in order', async () => {
+    const scheduler = {
+        async execute(toolCalls, { run, signal }) {
+            await run(toolCalls[0], { index: 0, signal })
+            throw new Error('scheduler failed after settled tool')
+        },
+    }
+    let finishedTrace
+    const trace = new TraceRuntime({
+        fileSystem: {
+            async mkdir() {},
+            async writeFile(_file, contents) {
+                finishedTrace = JSON.parse(contents)
+            },
+        },
+    })
+    const harness = await createHarness({ scheduler, trace })
+    let firstExecutions = 0
+    let secondExecutions = 0
+    harness.tools.register({
+        name: 'settled-side-effect',
+        sideEffect: true,
+        idempotent: false,
+        concurrencySafe: false,
+        output: { render: (_args, value) => [{ type: 'text', text: `rendered: ${value}` }] },
+        async execute() {
+            firstExecutions += 1
+            return 'real result'
+        },
+    })
+    harness.tools.register({
+        name: 'never-started',
+        async execute() {
+            secondExecutions += 1
+            return 'must not execute'
+        },
+    })
+    const calls = [call('call-1', 'settled-side-effect'), call('call-2', 'never-started')]
+    registerTurn(harness.llm, 'scheduler-after-settle', calls)
+
+    await assert.rejects(
+        () => harness.agent('scheduler-after-settle').send('fail after settled call'),
+        /scheduler failed after settled tool/,
+    )
+
+    const results = toolResults(harness)
+    assert.deepEqual(
+        results.map((event) => event.data.toolCallId),
+        ['call-1', 'call-2'],
+    )
+    assert.deepEqual(
+        results.map(({ data }) => ({
+            isError: data.isError,
+            errorCode: data.errorCode,
+            content: data.content,
+            outcome: data.outcome,
+        })),
+        [
+            {
+                isError: false,
+                errorCode: null,
+                content: 'rendered: real result',
+                outcome: undefined,
+            },
+            {
+                isError: true,
+                errorCode: null,
+                content:
+                    'ToolError: the tool was not executed because the run stopped (internal_error)',
+                outcome: 'not_executed',
+            },
+        ],
+    )
+    assert.equal(results[1].data.skipReason, 'internal_error')
+    assert.equal(firstExecutions, 1)
+    assert.equal(secondExecutions, 0)
+    assertProtocolComplete(harness)
+    assert.equal(finishedTrace.stopReason, 'internal_error')
+})
+
+test('scheduler failure recovery appends settled results in model call order after reverse completion', async () => {
+    const allStarted = deferred()
+    const gates = new Map(['call-1', 'call-2', 'call-3'].map((id) => [id, deferred()]))
+    const completionOrder = []
+    const scheduler = {
+        async execute(toolCalls, { run, signal }) {
+            const running = toolCalls.map((toolCall, index) => run(toolCall, { index, signal }))
+            await allStarted.promise
+            for (let index = running.length - 1; index >= 0; index -= 1) {
+                gates.get(toolCalls[index].arguments.id).resolve()
+                await running[index]
+            }
+            throw new Error('scheduler failed after reverse completion')
+        },
+    }
+    let startedCount = 0
+    const harness = await createHarness({ scheduler })
+    harness.tools.register({
+        name: 'ordered-result',
+        async execute({ id }) {
+            startedCount += 1
+            if (startedCount === 3) allStarted.resolve()
+            await gates.get(id).promise
+            completionOrder.push(id)
+            return `result-${id}`
+        },
+    })
+    const calls = ['call-1', 'call-2', 'call-3'].map((id) => call(id, 'ordered-result', { id }))
+    registerTurn(harness.llm, 'scheduler-reverse-completion', calls)
+
+    await assert.rejects(
+        () => harness.agent('scheduler-reverse-completion').send('fail after reverse completion'),
+        /scheduler failed after reverse completion/,
+    )
+
+    assert.deepEqual(completionOrder, ['call-3', 'call-2', 'call-1'])
+    const results = toolResults(harness)
+    assert.deepEqual(
+        results.map((event) => event.data.toolCallId),
+        ['call-1', 'call-2', 'call-3'],
+    )
+    assert.deepEqual(
+        results.map((event) => event.data.content),
+        ['result-call-1', 'result-call-2', 'result-call-3'],
+    )
+    assertProtocolComplete(harness)
+})
+
+test('scheduler failure after a call starts records unknown without retry and skips later calls in order', async () => {
+    const started = deferred()
+    const releaseExecution = deferred()
+    const executionSettled = deferred()
+    const scheduler = {
+        async execute(toolCalls, { run, signal }) {
+            const running = run(toolCalls[0], { index: 0, signal })
+            void running.catch(() => {})
+            await started.promise
+            throw new Error('scheduler failed after started tool')
+        },
+    }
+    const traceDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'mini-dsh-scheduler-unknown-'))
+    try {
+        const harness = await createHarness({
+            scheduler,
+            trace: new TraceRuntime({ directory: traceDirectory }),
+        })
+        let executionCount = 0
+        let skippedExecutionCount = 0
+        harness.tools.register({
+            name: 'started-side-effect',
+            sideEffect: true,
+            idempotent: false,
+            concurrencySafe: false,
+            async execute() {
+                executionCount += 1
+                started.resolve()
+                try {
+                    await releaseExecution.promise
+                    return 'completed after recovery'
+                } finally {
+                    executionSettled.resolve()
+                }
+            },
+        })
+        harness.tools.register({
+            name: 'not-started-side-effect',
+            sideEffect: true,
+            idempotent: false,
+            concurrencySafe: false,
+            async execute() {
+                skippedExecutionCount += 1
+                return 'must not execute'
+            },
+        })
+        const calls = [
+            call('call-1', 'started-side-effect'),
+            call('call-2', 'not-started-side-effect'),
+        ]
+        registerTurn(harness.llm, 'scheduler-after-start', calls)
+
+        await assert.rejects(
+            () => harness.agent('scheduler-after-start').send('fail while tool is pending'),
+            /scheduler failed after started tool/,
+        )
+
+        const results = toolResults(harness)
+        assert.deepEqual(
+            results.map((event) => event.data.toolCallId),
+            ['call-1', 'call-2'],
+        )
+        assert.deepEqual(
+            results.map(({ data }) => ({
+                isError: data.isError,
+                outcome: data.outcome,
+                recovered: data.recovered,
+                retryable: data.retryable,
+                skipReason: data.skipReason,
+            })),
+            [
+                {
+                    isError: true,
+                    outcome: 'unknown',
+                    recovered: false,
+                    retryable: false,
+                    skipReason: undefined,
+                },
+                {
+                    isError: true,
+                    outcome: 'not_executed',
+                    recovered: false,
+                    retryable: false,
+                    skipReason: 'internal_error',
+                },
+            ],
+        )
+        assert.match(results[0].data.content, /actual outcome is unknown/)
+        assert.equal(executionCount, 1)
+        assert.equal(skippedExecutionCount, 0)
+        assertProtocolComplete(harness)
+        const trace = await loadOnlyTrace(traceDirectory)
+        assert.equal(trace.stopReason, 'internal_error')
+
+        releaseExecution.resolve()
+        await executionSettled.promise
+    } finally {
+        releaseExecution.resolve()
+        await fs.rm(traceDirectory, { recursive: true, force: true })
+    }
+})
+
 test('run deadline cancels running calls, skips queued calls, and remains time_limit at run level', async () => {
     const harness = await createHarness({
         maxParallelToolCalls: 2,

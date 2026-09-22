@@ -116,8 +116,8 @@ function observationFor(record, seenResults, seenCallResults) {
     if (typeof toolName !== 'string') return null
     const args = record.call.arguments
     const result = record.result
-    const outcomeClass = classifyOutcome(result)
-    const projected = progressProjection(result, args)
+    const projected = progressProjection(record)
+    const outcomeClass = classifyOutcome(result, projected)
     const resultFingerprint = fingerprint(projected)
     const callFingerprint = fingerprint(canonicalize(args))
     const lowInformation = outcomeClass !== 'success' || isMeaningfullyEmpty(projected)
@@ -148,7 +148,7 @@ function isProgressEvidence(record) {
     return true
 }
 
-function classifyOutcome(result) {
+function classifyOutcome(result, projected) {
     if (result?.isError) return `error:${result.errorCode ?? 'unknown'}`
     const value = result?.value
     if (isProcessLike(value) && value.exitCode !== 0) return `process_exit:${value.exitCode}`
@@ -159,11 +159,13 @@ function classifyOutcome(result) {
     ) {
         return 'empty'
     }
-    if (isMeaningfullyEmpty(value)) return 'empty'
+    if (isMeaningfullyEmpty(projected)) return 'empty'
     return 'success'
 }
 
-function progressProjection(result, args) {
+function progressProjection(record) {
+    const result = record.result
+    const args = record.call?.arguments
     const value = result?.value
     if (isProcessLike(value)) {
         return canonicalize(
@@ -184,6 +186,13 @@ function progressProjection(result, args) {
             },
             args,
         )
+    }
+    if (
+        isMeaningfullyEmpty(value) &&
+        typeof record.renderedContent === 'string' &&
+        !isMeaningfullyEmpty(record.renderedContent)
+    ) {
+        return canonicalize(record.renderedContent, args)
     }
     return canonicalize(value, args)
 }

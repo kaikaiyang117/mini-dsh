@@ -8,6 +8,7 @@ import {
 const record = (name, arguments_, value, options = {}) => ({
     state: 'settled',
     call: { name, arguments: arguments_ },
+    renderedContent: options.renderedContent,
     result: {
         value,
         isError: options.isError ?? false,
@@ -89,6 +90,29 @@ test('process results ignore echoed command and volatile duration fields', () =>
         ),
     )
     assert.equal(decision.state, 'no_progress')
+})
+
+test('model-visible rendered content is the fallback for empty successful values', () => {
+    const detector = new SemanticProgressDetector()
+    assert.equal(
+        observe(detector, record('read_state', {}, undefined, { renderedContent: 'state = 1' }))
+            .state,
+        'progress',
+    )
+    assert.equal(
+        observe(detector, record('read_state', {}, undefined, { renderedContent: 'state = 2' }))
+            .state,
+        'progress',
+    )
+})
+
+test('repeated rendered fallback is useful progress once, then exact-repeat evidence', () => {
+    const detector = new SemanticProgressDetector()
+    const sameRenderedValue = () =>
+        record('read_state', {}, undefined, { renderedContent: 'no data' })
+
+    assert.equal(observe(detector, sameRenderedValue()).state, 'progress')
+    assert.equal(observe(detector, sameRenderedValue()).state, 'no_progress')
 })
 
 test('same call with a changed informative result counts as progress', () => {

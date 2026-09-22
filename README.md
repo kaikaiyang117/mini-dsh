@@ -113,7 +113,7 @@ Model-visible Tools are selected per Step through `ToolCatalog` and `ToolVisibil
 Registered Tools -> Tool Catalog -> Per-Step Visibility -> Model Request
 ```
 
-Default visibility selects all registered Tools, so this seam does not change current model behavior. `/tools` continues to show registered Tools; visibility is not authorization, and hidden Tools remain executable through the Tool Runtime.
+Default visibility selects all registered Tools. Set `MINI_DSH_TOOL_ROUTING=deterministic` to opt into lexical Top-K routing (`MINI_DSH_MAX_VISIBLE_TOOLS`, default `12`); no-match and non-ASCII-only queries fall back to all Tools. This deterministic router matches ASCII tokens in names, descriptions, and schema property names; it does not understand cross-language meaning, synonyms, semantic similarity, or changing intent between Tool results. `/tools` continues to show registered Tools; visibility is not authorization, and hidden Tools remain executable through the Tool Runtime. Model-driven discovery is deferred to Phase 8.3.
 
 Still intentionally outside the current runtime scope are semantic no-progress detection, a steering queue, a full model configuration center, and a TUI/Web UI. The sandbox remains an application-level path/command policy with approval, not a kernel isolation boundary.
 

@@ -4,6 +4,7 @@ import { contextPolicyFromEnv } from './core/context-policy-config.js'
 import { CostEstimator, pricingFromEnv } from './core/cost-estimator.js'
 import { runPolicyFromEnv } from './core/run-policy-config.js'
 import { maxParallelToolCallsFromEnv } from './core/tool-scheduler.js'
+import { toolVisibilityFromEnv } from './core/tool-visibility-config.js'
 import * as deepseek from './models/deepseek.js'
 import * as agentLoop from './plugins/agent-loop.js'
 import * as agents from './plugins/agents.js'
@@ -45,6 +46,7 @@ await root.plugin(agentLoop, {
         pricing: pricingFromEnv(process.env.MINI_DSH_PRICING_JSON),
     }),
     maxParallelToolCalls: maxParallelToolCallsFromEnv(),
+    toolVisibility: toolVisibilityFromEnv(),
 })
 
 await root.plugin(runtimeContext, { workspace })

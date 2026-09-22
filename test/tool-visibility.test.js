@@ -3,6 +3,7 @@ import test from 'node:test'
 import { AgentLoopRuntime } from '../src/core/agent-loop-runtime.js'
 import { AgentRuntime } from '../src/core/agent-runtime.js'
 import { ContextManager } from '../src/core/context-manager.js'
+import { DeterministicToolVisibility } from '../src/core/deterministic-tool-visibility.js'
 import { LlmRuntime } from '../src/core/llm-runtime.js'
 import { SessionRuntime } from '../src/core/session-runtime.js'
 import { SystemPromptRuntime } from '../src/core/system-prompt-runtime.js'
@@ -143,6 +144,17 @@ test('visibility is selected per step from fresh snapshots and does not restrict
     }
 })
 
+test('deterministic routing excludes irrelevant large schemas from model and TokenMeter inputs', async () => {
+    const allTools = await measureToolRequest()
+    const routedTools = await measureToolRequest(
+        new DeterministicToolVisibility({ maxVisibleTools: 2 }),
+    )
+
+    assert.equal(allTools.length, 9)
+    assert.equal(routedTools.length, 1)
+    assert.deepEqual(schemaNames(routedTools), ['weather_lookup'])
+})
+
 async function createHarness() {
     const sessions = new SessionRuntime()
     const systemPrompt = new SystemPromptRuntime()
@@ -165,4 +177,68 @@ function registerTool(tools, name, overrides = {}) {
 
 function schemaNames(schemas) {
     return schemas.map((schema) => schema.function.name)
+}
+
+async function measureToolRequest(toolVisibility) {
+    const harness = await createHarness()
+    registerTool(harness.tools, 'weather_lookup', {
+        description: 'Fetch a current weather forecast by city',
+        parameters: { type: 'object', properties: { city: { type: 'string' } } },
+    })
+    for (let index = 0; index < 8; index += 1) {
+        registerTool(harness.tools, `irrelevant_${index}`, {
+            description: `unrelated ${'schema '.repeat(1000)}`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    payload: { type: 'string', description: 'x'.repeat(10_000) },
+                },
+            },
+        })
+    }
+
+    let measuredTools
+    let requestTools
+    const contextManager = new ContextManager({
+        sessions: harness.sessions,
+        tokenMeter: {
+            estimateRequest({ tools }) {
+                measuredTools = tools
+                return {
+                    tokens: JSON.stringify(tools).length,
+                    exact: false,
+                    method: 'test-meter',
+                }
+            },
+        },
+    })
+    harness.llm.register(
+        'mock',
+        {
+            models: ['tool-pressure'],
+            async chat(request) {
+                requestTools = request.tools
+                return { content: 'done', toolCalls: [] }
+            },
+        },
+        { defaultModel: 'tool-pressure' },
+    )
+    const loop = new AgentLoopRuntime({
+        sessions: harness.sessions,
+        systemPrompt: harness.systemPrompt,
+        tools: harness.tools,
+        llm: harness.llm,
+        contextManager,
+        toolVisibility,
+    })
+    const agent = harness.agents.create({
+        sessionId: harness.session.id,
+        model: 'mock/tool-pressure',
+        loop,
+    })
+
+    assert.equal(await agent.send('weather forecast'), 'done')
+    assert.strictEqual(measuredTools, requestTools)
+    assert.deepEqual(measuredTools, requestTools)
+    return measuredTools
 }

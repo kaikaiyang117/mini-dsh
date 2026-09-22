@@ -3,6 +3,7 @@ import path from 'node:path'
 import test from 'node:test'
 import { pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
+import { DeterministicToolVisibility } from '../src/core/deterministic-tool-visibility.js'
 import { ToolCatalog } from '../src/core/tool-catalog.js'
 import { ToolRuntime } from '../src/core/tool-runtime.js'
 import * as mcpPlugin from '../src/plugins/mcp.js'
@@ -112,18 +113,33 @@ test('new snapshots reflect MCP Tool registration and disposal without changing 
         await root.plugin(mcpPlugin, {
             servers: [{ name: 'fake', package: fakeMcpPlugin }],
         })
+        register(root.tools, 'local_alpha')
+        register(root.tools, 'local_beta')
         const catalog = new ToolCatalog({ tools: root.tools })
+        const visibility = new DeterministicToolVisibility({ maxVisibleTools: 1 })
         const beforeConnect = catalog.snapshot()
-        assert.deepEqual(beforeConnect.names(), [])
+        assert.deepEqual(beforeConnect.names(), ['local_alpha', 'local_beta'])
+        assert.deepEqual(visibility.select({ catalog: beforeConnect.list(), input: 'fake echo' }), [
+            'local_alpha',
+            'local_beta',
+        ])
 
         await root.mcp.connect('fake')
         const connected = catalog.snapshot()
-        assert.deepEqual(connected.names(), ['mcp__fake__echo'])
-        assert.deepEqual(beforeConnect.names(), [])
+        assert.deepEqual(connected.names(), ['local_alpha', 'local_beta', 'mcp__fake__echo'])
+        assert.deepEqual(visibility.select({ catalog: connected.list(), input: 'fake echo' }), [
+            'mcp__fake__echo',
+        ])
+        assert.deepEqual(beforeConnect.names(), ['local_alpha', 'local_beta'])
 
         await root.mcp.disconnect('fake')
-        assert.deepEqual(catalog.snapshot().names(), [])
-        assert.deepEqual(connected.names(), ['mcp__fake__echo'])
+        const disconnected = catalog.snapshot()
+        assert.deepEqual(disconnected.names(), ['local_alpha', 'local_beta'])
+        assert.deepEqual(visibility.select({ catalog: disconnected.list(), input: 'fake echo' }), [
+            'local_alpha',
+            'local_beta',
+        ])
+        assert.deepEqual(connected.names(), ['local_alpha', 'local_beta', 'mcp__fake__echo'])
     } finally {
         await root.fiber.dispose()
     }

@@ -113,7 +113,7 @@ while (true) {
 Registered Tools -> Tool Catalog -> Per-Step Visibility -> Model Request
 ```
 
-默认 Visibility 仍选择全部已注册 Tool，因此不会改变当前模型行为。`/tools` 继续展示已注册 Tool；Visibility 不是授权机制，被隐藏的 Tool 仍可通过 Tool Runtime 执行。
+默认 Visibility 仍选择全部已注册 Tool。设置 `MINI_DSH_TOOL_ROUTING=deterministic` 可启用 opt-in 词法 Top-K 路由（`MINI_DSH_MAX_VISIBLE_TOOLS` 默认 `12`）；没有匹配或 query 只有非 ASCII 词元时回退到全部 Tool。该 Router 只匹配名称、描述和 Schema property 名中的 ASCII 词元，不理解跨语言语义、同义词、语义相似度，也不跟踪 Tool Result 后变化的意图。`/tools` 继续展示已注册 Tool；Visibility 不是授权机制，被隐藏的 Tool 仍可通过 Tool Runtime 执行。模型主动发现能力留到 Phase 8.3。
 
 当前仍不在 Runtime 范围内：语义 no-progress detection、steering queue、完整模型配置中心和 TUI/Web UI。Sandbox 仍然是应用层路径/命令 Policy 加人工确认，不是内核级隔离。
 

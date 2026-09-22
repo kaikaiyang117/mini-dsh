@@ -49,6 +49,29 @@ function assertProgressResults(result) {
             throw new Error(`guarded mode must not stop valid progress in ${name}`)
         }
     }
+
+    const unrecoverableBaseline = findResult(result, 'unrecoverable-stall', 'baseline')
+    const unrecoverableRemind = findResult(result, 'unrecoverable-stall', 'remind')
+    const unrecoverableGuarded = findResult(result, 'unrecoverable-stall', 'guarded')
+    if (
+        unrecoverableBaseline.stopReason !== 'step_limit' ||
+        unrecoverableRemind.stopReason !== 'step_limit' ||
+        unrecoverableGuarded.stopReason !== 'no_progress'
+    ) {
+        throw new Error('unrecoverable-stall must stop at the expected policy for each variant')
+    }
+    for (const metric of ['steps', 'toolCalls', 'estimatedInputTokens']) {
+        if (unrecoverableGuarded[metric] >= unrecoverableBaseline[metric]) {
+            throw new Error(`guarded mode must reduce ${metric} for unrecoverable-stall`)
+        }
+    }
+    if (
+        result.variants.baseline.noProgressStops !== 0 ||
+        result.variants.remind.noProgressStops !== 0 ||
+        result.variants.guarded.noProgressStops < 1
+    ) {
+        throw new Error('only guarded mode should report no-progress stops in this Eval')
+    }
 }
 
 function findResult(result, caseName, variant) {

@@ -51,6 +51,41 @@ test('EvalRunner accepts custom variants while retaining its default variant beh
     assert.deepEqual(Object.keys(report.variants), ['baseline', 'guarded'])
 })
 
+test('EvalRunner scores stop-reason completion with variant-specific expectations', async () => {
+    const report = await new EvalRunner({
+        cases: [
+            {
+                name: 'expected-stop',
+                prompt: 'run',
+                expected: {
+                    completion: 'stop-reason',
+                    stopReason: { baseline: 'step_limit', guarded: 'no_progress' },
+                },
+            },
+        ],
+        variants: ['baseline', 'guarded'],
+        fixtureFactory: async (_evalCase, variant) => ({
+            agent: { async send() {} },
+            trace: {
+                latest: () => ({
+                    ...successfulTrace(),
+                    stopReason: variant === 'baseline' ? 'step_limit' : 'no_progress',
+                }),
+            },
+            recordingTokenMeter: new RecordingTokenMeter(),
+        }),
+    }).run()
+
+    assert.deepEqual(
+        report.results.map(({ success }) => success),
+        [true, true],
+    )
+    assert.deepEqual(
+        report.results.map(({ targetToolCalled }) => targetToolCalled),
+        [false, false],
+    )
+})
+
 test('target tool scorer distinguishes a call from a successful execution', () => {
     assert.deepEqual(
         targetToolCalledScorer(

@@ -1,7 +1,7 @@
 import { performance } from 'node:perf_hooks'
 import { TraceRuntime } from '../core/trace-runtime.js'
 import { summarizeEvalResults } from './eval-metrics.js'
-import { targetToolCalledScorer } from './eval-scorer.js'
+import { evalCompletionScorer } from './eval-scorer.js'
 
 export const EVAL_VARIANTS = Object.freeze(['all', 'deterministic', 'progressive'])
 
@@ -47,24 +47,24 @@ export class EvalRunner {
         cases,
         variants = EVAL_VARIANTS,
         fixtureFactory,
-        scorer = targetToolCalledScorer,
+        scorer = evalCompletionScorer,
     } = {}) {
         if (!Array.isArray(cases) || cases.length === 0) {
             throw new TypeError('EvalRunner requires at least one EvalCase')
         }
-        if (
-            cases.some(
-                (item) =>
-                    !item?.name || typeof item.prompt !== 'string' || !item.expected?.targetTool,
+        if (cases.some((item) => !isValidEvalCase(item))) {
+            throw new TypeError(
+                'Each EvalCase requires name, prompt, and a valid completion expectation',
             )
-        ) {
-            throw new TypeError('Each EvalCase requires name, prompt, and expected.targetTool')
         }
         if (typeof fixtureFactory !== 'function') {
             throw new TypeError('EvalRunner requires fixtureFactory()')
         }
         if (typeof scorer !== 'function')
             throw new TypeError('EvalRunner scorer must be a function')
+        if (cases.some((item) => item.scorer !== undefined && typeof item.scorer !== 'function')) {
+            throw new TypeError('EvalCase scorer must be a function')
+        }
         if (
             !Array.isArray(variants) ||
             variants.length === 0 ||
@@ -129,7 +129,7 @@ export class EvalRunner {
         const trace = fixture.trace.latest()
         if (!trace)
             throw new Error(`Eval fixture did not capture a Trace for ${evalCase.name}/${variant}`)
-        const score = this.scorer(trace, evalCase.expected)
+        const score = (evalCase.scorer ?? this.scorer)(trace, evalCase.expected, variant)
         const requests = fixture.recordingTokenMeter.requests
         const visibleToolCountByStep = requests.map((request) => request.visibleToolCount)
         // Total tool exposure across model requests, not a count of distinct tools.
@@ -168,6 +168,22 @@ export class EvalRunner {
             error,
         }
     }
+}
+
+function isValidEvalCase(item) {
+    if (!item?.name || typeof item.prompt !== 'string' || !item.expected) return false
+    if (item.expected.completion === undefined || item.expected.completion === 'target-tool') {
+        return Boolean(item.expected.targetTool)
+    }
+    if (item.expected.completion !== 'stop-reason') return false
+    const stopReasons =
+        typeof item.expected.stopReason === 'string'
+            ? [item.expected.stopReason]
+            : Object.values(item.expected.stopReason ?? {})
+    return (
+        stopReasons.length > 0 &&
+        stopReasons.every((reason) => typeof reason === 'string' && reason.length > 0)
+    )
 }
 
 function failedResult(evalCase, variant, durationMs, error) {

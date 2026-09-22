@@ -10,3 +10,18 @@ export function targetToolCalledScorer(trace, expected = {}) {
         success: matchingCalls.some((toolCall) => toolCall.status === 'completed'),
     }
 }
+
+export function evalCompletionScorer(trace, expected = {}, variant) {
+    if (expected.completion === 'stop-reason') {
+        const expectedStopReason =
+            typeof expected.stopReason === 'string'
+                ? expected.stopReason
+                : expected.stopReason?.[variant]
+        return {
+            targetToolCalled: false,
+            targetToolSucceeded: false,
+            success: trace?.stopReason === expectedStopReason,
+        }
+    }
+    return targetToolCalledScorer(trace, expected)
+}

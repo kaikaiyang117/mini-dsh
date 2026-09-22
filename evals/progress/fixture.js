@@ -132,6 +132,9 @@ export async function createProgressFixture(evalCase, variant) {
 
 function responseFor(scenario, request, variant, state, requestCount) {
     const reminded = request.system.includes('[Harness progress notice]')
+    if (scenario === 'unrecoverable-stall') {
+        return tool('empty_search', { query: 'permanently empty' }, requestCount)
+    }
     if (scenario === 'exact-repeat-recovery') {
         if (reminded || (variant === 'baseline' && requestCount >= 6))
             return tool('target', {}, requestCount)

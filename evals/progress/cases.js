@@ -29,4 +29,17 @@ export const PROGRESS_CASES = Object.freeze([
         expected: { targetTool: 'target' },
         scenario: 'mixed-parallel-progress',
     },
+    {
+        name: 'unrecoverable-stall',
+        prompt: 'Stop repeated empty searches when no recovery is possible.',
+        expected: {
+            completion: 'stop-reason',
+            stopReason: {
+                baseline: 'step_limit',
+                remind: 'step_limit',
+                guarded: 'no_progress',
+            },
+        },
+        scenario: 'unrecoverable-stall',
+    },
 ])

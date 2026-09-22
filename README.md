@@ -107,6 +107,14 @@ The runtime now includes:
 - bounded parallel execution for explicitly `concurrencySafe` Tools;
 - FIFO serialization for Agent Runs within one Session, while different Sessions may execute concurrently.
 
+Model-visible Tools are selected per Step through `ToolCatalog` and `ToolVisibility`:
+
+```text
+Registered Tools -> Tool Catalog -> Per-Step Visibility -> Model Request
+```
+
+Default visibility selects all registered Tools, so this seam does not change current model behavior. `/tools` continues to show registered Tools; visibility is not authorization, and hidden Tools remain executable through the Tool Runtime.
+
 Still intentionally outside the current runtime scope are semantic no-progress detection, a steering queue, a full model configuration center, and a TUI/Web UI. The sandbox remains an application-level path/command policy with approval, not a kernel isolation boundary.
 
 ## For beginners: write it from scratch

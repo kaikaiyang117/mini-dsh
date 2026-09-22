@@ -3,7 +3,9 @@ import { ContextManager } from './context-manager.js'
 import { RunController } from './run-controller.js'
 import { combineAbortSignals, createRunDeadline } from './run-deadline.js'
 import { SessionRunCoordinator } from './session-run-coordinator.js'
+import { ToolCatalog } from './tool-catalog.js'
 import { ToolScheduler } from './tool-scheduler.js'
+import { AllToolsVisibility } from './tool-visibility.js'
 
 const NOT_EXECUTED_RESULT = 'ToolError: the tool was not executed because the run stopped'
 
@@ -27,10 +29,14 @@ export class AgentLoopRuntime {
         tokenMeter,
         contextPolicy,
         runCoordinator,
+        toolCatalog,
+        toolVisibility,
     } = {}) {
         this.sessions = sessions
         this.systemPrompt = systemPrompt
         this.tools = tools
+        this.toolCatalog = toolCatalog ?? new ToolCatalog({ tools })
+        this.toolVisibility = toolVisibility ?? new AllToolsVisibility()
         this.llm = llm
         this.trace = trace
         this.policy = policy
@@ -99,7 +105,17 @@ export class AgentLoopRuntime {
                         sessionId,
                         step,
                     })
-                    const toolSchemas = this.tools.schemas()
+                    const catalogSnapshot = this.toolCatalog.snapshot()
+                    const visibleNames = await this.toolVisibility.select({
+                        catalog: catalogSnapshot.list(),
+                        agent,
+                        sessionId,
+                        runId,
+                        stepId,
+                        step,
+                        input,
+                    })
+                    const toolSchemas = catalogSnapshot.view(visibleNames).schemas()
                     const preparedContext = await this.contextManager.prepare(sessionId, {
                         agent,
                         runId,

@@ -20,6 +20,8 @@ class AgentLoopService extends Service {
             policy: config.policy,
             costEstimator: config.costEstimator,
             maxParallelToolCalls: config.maxParallelToolCalls,
+            toolCatalog: config.toolCatalog,
+            toolVisibility: config.toolVisibility,
             tokenMeter: config.tokenMeter,
             contextPolicy: config.contextPolicy,
         })

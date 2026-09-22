@@ -107,6 +107,14 @@ while (true) {
 - 只对显式标记 `concurrencySafe` 的 Tool 做有界并行；
 - 同一 Session 内 Agent Run FIFO 串行，不同 Session 可以并发。
 
+模型可见 Tool 在每个 Step 经 `ToolCatalog` 和 `ToolVisibility` 选择：
+
+```text
+Registered Tools -> Tool Catalog -> Per-Step Visibility -> Model Request
+```
+
+默认 Visibility 仍选择全部已注册 Tool，因此不会改变当前模型行为。`/tools` 继续展示已注册 Tool；Visibility 不是授权机制，被隐藏的 Tool 仍可通过 Tool Runtime 执行。
+
 当前仍不在 Runtime 范围内：语义 no-progress detection、steering queue、完整模型配置中心和 TUI/Web UI。Sandbox 仍然是应用层路径/命令 Policy 加人工确认，不是内核级隔离。
 
 ## 给新手：从零手写

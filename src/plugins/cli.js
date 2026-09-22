@@ -1,7 +1,16 @@
 import readline from 'node:readline'
 
 export const name = 'mini-cli'
-export const inject = ['sessions', 'agents', 'agentLoop', 'tools', 'systemPrompt', 'llm', 'sandbox']
+export const inject = [
+    'sessions',
+    'agents',
+    'agentLoop',
+    'tools',
+    'systemPrompt',
+    'llm',
+    'sandbox',
+    'mcp',
+]
 
 /**
  * Thinnest UI layer. Session switching is a command-level concern; session
@@ -35,7 +44,7 @@ export function apply(ctx, config = {}) {
         const ready = (async () => {
             console.log('\nmini-dsh: a learning runtime for DSH')
             console.log(
-                'commands: /tools /history /sessions /resume <session-id> /new /prompt /models /model [provider/model] /reset /exit\n',
+                'commands: /tools /mcp list|connect|disconnect|reload /history /sessions /resume <session-id> /new /prompt /models /model [provider/model] /reset /exit\n',
             )
             console.log(`model: ${initialModel}`)
             console.log(`sandbox workspace: ${ctx.sandbox.workspace}`)
@@ -93,6 +102,41 @@ export function apply(ctx, config = {}) {
                         .join('\n') || '(no sessions)',
                 )
                 console.log()
+                return ask()
+            }
+
+            if (text === '/mcp list') {
+                console.log(
+                    ctx.mcp
+                        .list()
+                        .map(
+                            (server) =>
+                                `${server.name}\t${server.state}${server.lastError ? `\t${server.lastError.message}` : ''}`,
+                        )
+                        .join('\n') || '(no MCP servers)',
+                )
+                console.log()
+                return ask()
+            }
+
+            const mcpOperation = text.match(/^\/mcp\s+(connect|disconnect|reload)\s+(.+)$/)
+            if (mcpOperation) {
+                const [, operation, serverName] = mcpOperation
+                try {
+                    const status = await ctx.mcp[operation](serverName.trim())
+                    console.log(`${status.name}\t${status.state}\n`)
+                } catch (error) {
+                    const status = ctx.mcp.get(serverName.trim())
+                    const message = status
+                        ? (status.lastError?.message ?? 'operation failed')
+                        : (error?.message ?? error)
+                    console.error(`[McpError] ${status?.name ?? serverName}: ${message}\n`)
+                }
+                return ask()
+            }
+
+            if (text.startsWith('/mcp')) {
+                console.log('usage: /mcp list|connect <name>|disconnect <name>|reload <name>\n')
                 return ask()
             }
 

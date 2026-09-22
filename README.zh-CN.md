@@ -36,7 +36,7 @@ pnpm start
 
 `.env.example` 里写的是 `deepseek/deepseek-v4-flash`；如果完全没有 `MINI_DSH_MODEL`（例如没复制 `.env`），入口回退到 `deepseek/deepseek-v4-pro`（`src/index.js:41`）。
 
-可选：填写 `CONTEXT7_API_KEY`。`mcp.context7.com` 不可达时只会打 `[plugin] failed`，不会把进程打挂。
+可选：填写 `CONTEXT7_API_KEY`。`mcp.context7.com` 不可达时 Context7 会标记为 `FAILED`，但 CLI 仍会启动。
 
 Context7 连上之后的路径：
 
@@ -48,10 +48,24 @@ Context7 连上之后的路径：
   -> mcp__context7__query-docs
 ```
 
+Managed MCP 生命周期：
+
+```text
+McpManager
+  -> @deepseek-ai/dsh-mcp-client
+  -> 远程 MCP Server
+```
+
+Mini-DSH 只管理 MCP Plugin Instance 生命周期，并提供 `DISCONNECTED`、`CONNECTING`、`ACTIVE`、`FAILED` 四种状态。MCP 协议传输、发现、Tool 同步和重连继续由官方 `dsh-mcp-client` 负责。`ACTIVE` 只表示客户端 Plugin Fiber 已成功激活，不代表远端 transport 当前一定健康。
+
 ## CLI
 
 ```text
 /tools
+/mcp list
+/mcp connect <name>
+/mcp disconnect <name>
+/mcp reload <name>
 /models
 /model
 /model deepseek/deepseek-v4-pro
@@ -64,13 +78,17 @@ Context7 连上之后的路径：
 
 写文件和 Bash 执行前会问 `[Y/n]`。Agent 跑起来后按 **Esc** 取消当前轮（方向键不会误取消）。
 
-## Agent Loop 为什么没有 12 步限制？
+## Agent Loop 的治理与 Context
 
-学习版故意使用：
+核心执行形状仍然是 model -> tool -> model，但现在每个 Agent Run 都由独立的 `RunController` 和 `ContextManager` 管理：
 
 ```js
 while (true) {
-  const response = await model()
+  const stepDecision = controller.beforeStep(signal)
+  if (stepDecision.action === 'stop') return stepDecision
+
+  const context = await contextManager.prepare(sessionId, request)
+  const response = await model(context)
 
   if (!response.toolCalls?.length) {
     return response.content
@@ -80,23 +98,16 @@ while (true) {
 }
 ```
 
-正常结束只由模型是否继续请求工具决定。
+当前 Runtime 已包含：
 
-这里没有加入：
+- 每个 Run 独立的 step、Tool Call、duration、input/output token、estimated cost 和 Tool failure 限制；单项限制使用 `null` 关闭；
+- Run deadline，以及 LLM / Tool 的 cooperative cancellation；
+- 基于 Event Log 的 Context Projection、Token Pressure 和确定性持久 Compaction；
+- append-only JSONL Session persistence、resume、replay 和 interrupted-tool recovery；
+- 只对显式标记 `concurrencySafe` 的 Tool 做有界并行；
+- 同一 Session 内 Agent Run FIFO 串行，不同 Session 可以并发。
 
-- maxSteps
-- token/cost budget
-- compaction
-- no-progress detector
-- stop hooks
-- steering queue
-- 完整权限系统（学习版只有应用层路径闸门和命令黑名单，挡在唯一真正的边界——CLI [Y/n] 确认——前面）
-- 完整模型配置中心
-- TUI/Web UI
-
-这些都是成熟产品很有用的能力，但不是理解 Agent Harness 核心所必需的。
-
-> 注意：因此一个错误的模型/工具链理论上可能持续循环。这个项目是学习用，不建议直接作为生产 Agent Runtime。
+当前仍不在 Runtime 范围内：语义 no-progress detection、steering queue、完整模型配置中心和 TUI/Web UI。Sandbox 仍然是应用层路径/命令 Policy 加人工确认，不是内核级隔离。
 
 ## 给新手：从零手写
 

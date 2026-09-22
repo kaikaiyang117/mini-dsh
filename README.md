@@ -36,7 +36,7 @@ pnpm start
 
 `.env.example` sets `deepseek/deepseek-v4-flash`. If `MINI_DSH_MODEL` is absent entirely (e.g. you didn't copy `.env`), the entry falls back to `deepseek/deepseek-v4-pro` (`src/index.js:41`).
 
-Optional: fill in `CONTEXT7_API_KEY`. When `mcp.context7.com` is unreachable you only see `[plugin] failed` — the process does not die.
+Optional: fill in `CONTEXT7_API_KEY`. When `mcp.context7.com` is unreachable, Context7 is marked `FAILED` and the CLI still starts.
 
 The path once Context7 is connected:
 
@@ -48,10 +48,24 @@ The path once Context7 is connected:
   -> mcp__context7__query-docs
 ```
 
+Managed MCP lifecycle:
+
+```text
+McpManager
+  -> @deepseek-ai/dsh-mcp-client
+  -> remote MCP server
+```
+
+Mini-DSH manages MCP plugin instances and exposes `DISCONNECTED`, `CONNECTING`, `ACTIVE`, and `FAILED` lifecycle states. The official `dsh-mcp-client` owns MCP transport, discovery, tool synchronization, and reconnect. `ACTIVE` means the client plugin Fiber activated successfully; it does not assert that the remote transport is currently healthy.
+
 ## CLI
 
 ```text
 /tools
+/mcp list
+/mcp connect <name>
+/mcp disconnect <name>
+/mcp reload <name>
 /models
 /model
 /model deepseek/deepseek-v4-pro

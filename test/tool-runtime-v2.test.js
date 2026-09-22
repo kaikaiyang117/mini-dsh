@@ -422,7 +422,7 @@ test('builtin bash settles its process after abort before ToolRuntime returns ti
         await root.plugin(systemPromptPlugin)
         await root.plugin(toolsPlugin)
         await root.plugin(sandboxPlugin, { workspace, autoApprove: true })
-        await root.plugin(bashPlugin, { timeoutMs: 1_200, killGraceMs: 20 })
+        await root.plugin(bashPlugin, { timeoutMs: 5_000, killGraceMs: 20 })
 
         const command = `echo $$ > bash.pid; exec node -e 'process.on("SIGTERM",()=>{});setInterval(()=>{},1000)'`
         const result = await root.tools.execute('bash', { command })

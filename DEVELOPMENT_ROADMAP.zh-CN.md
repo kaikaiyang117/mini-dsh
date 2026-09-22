@@ -1010,9 +1010,9 @@ hard threshold -> stopReason = no_progress
 
 本阶段没有 provider timeout policy，因此 LLM pending 用例验证外部取消，不声称验证真实 Provider timeout。Eval 使用 Mock LLM，不访问真实网络，也不是 production chaos testing。
 
-### Phase 11.2 — Crash / Resume / Side-effect Recovery 待办
+### Phase 11.2 — Crash / Resume / Side-effect Recovery ✅
 
-后续验证进程崩溃与恢复边界、Resume 后的 side-effect 不确定性；本阶段没有测试 crash-resume exactly-once。
+离线 Eval 使用真实 child process、SIGKILL、JsonlSessionStore reopen、torn final-line recovery 和未闭合 Tool Call recovery。非幂等副作用采用 `unknown` / `retryable=false` 的 at-most-no-blind-retry 语义；不宣称 distributed exactly-once。
 
 ### Phase 11.3 — MCP Failure 待办
 
@@ -1081,7 +1081,7 @@ Phase 10.2 Context Pressure / Compaction Eval ✅
    ↓
 Phase 11.1 Core Runtime Fault Injection ✅
    ↓
-Phase 11.2 Crash / Resume / Side-effect Recovery 待办
+Phase 11.2 Crash / Resume / Side-effect Recovery ✅
    ↓
 Phase 11.3 MCP Failure 待办
 ```

@@ -18,6 +18,7 @@
         "eval:context-pressure": "node scripts/eval-context-pressure.js",
         "eval:long-horizon": "node scripts/eval-long-horizon.js",
         "eval:fault-injection": "node scripts/eval-fault-injection.js",
+        "eval:crash-recovery": "node scripts/eval-crash-recovery.js",
         "lint:fix": "biome check --write .",
         "format": "biome format --write ."
     },

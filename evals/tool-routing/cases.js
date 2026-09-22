@@ -1,0 +1,42 @@
+export const TOOL_ROUTING_CASES = Object.freeze([
+    {
+        name: 'direct-name-match',
+        prompt: 'read the config file',
+        searchQuery: 'config file',
+        expected: { targetTool: 'read_file' },
+        setup: { irrelevantTools: 0 },
+        targetDescription: 'Read a configuration file from the workspace',
+    },
+    {
+        name: 'description-match',
+        prompt: 'show repository branches',
+        searchQuery: 'repository branches',
+        expected: { targetTool: 'branch_status' },
+        setup: { irrelevantTools: 0 },
+        targetDescription: 'List branches in a Git repository',
+    },
+    {
+        name: 'github-issues-cross-language',
+        prompt: '帮我查看仓库的问题',
+        searchQuery: 'github issues',
+        expected: { targetTool: 'github_issues_search' },
+        setup: { irrelevantTools: 20 },
+        targetDescription: 'Search GitHub repository issues',
+    },
+    {
+        name: 'large-noisy-catalog',
+        prompt: 'search audit events by account',
+        searchQuery: 'audit events account',
+        expected: { targetTool: 'audit_events_search' },
+        setup: { irrelevantTools: 50, schemaPayloadBytes: 1200 },
+        targetDescription: 'Find audit events for an account',
+    },
+    {
+        name: 'search-activation-required',
+        prompt: 'do the special lookup',
+        searchQuery: 'release notes',
+        expected: { targetTool: 'release_notes_search' },
+        setup: { irrelevantTools: 20 },
+        targetDescription: 'Search the archived release notes',
+    },
+])

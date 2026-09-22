@@ -916,7 +916,7 @@ tool_search(query)
 
 让模型初始只看到 Core Tools；需要额外能力时再搜索并激活。
 
-Tool Activation 可以按 Session 维护：
+Tool Activation 当前按 Run 维护，并在 Run 结束后清理：
 
 ```text
 base tools + activated tools

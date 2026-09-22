@@ -13,6 +13,7 @@
         "test": "node --test test/*.test.js",
         "check": "node scripts/check-syntax.js",
         "lint": "biome check .",
+        "eval:tool-routing": "node scripts/eval-tool-routing.js",
         "lint:fix": "biome check --write .",
         "format": "biome format --write ."
     },

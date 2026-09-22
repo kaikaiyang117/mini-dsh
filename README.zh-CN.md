@@ -125,6 +125,10 @@ MINI_DSH_MAX_ACTIVATED_TOOLS=24
 
 当前仍不在 Runtime 范围内：语义 no-progress detection、steering queue、完整模型配置中心和 TUI/Web UI。Sandbox 仍然是应用层路径/命令 Policy 加人工确认，不是内核级隔离。
 
+## Evaluation
+
+运行 `pnpm eval:tool-routing` 可执行 V0 确定性 Mock 评测，用于比较 Harness 的 Tool Visibility 策略；它不是生产模型质量 Benchmark。真实模型评测、文件系统与长任务，以及 Fault Injection 留待后续阶段。
+
 ## 给新手：从零手写
 
 不要直接读完整仓库。先扫一遍 **[ARCHITECTURE.md](./ARCHITECTURE.md)** 建立整体概念图，再新建空项目，按 **[LEARNING.md](./LEARNING.md)** 的里程碑自己写一遍。

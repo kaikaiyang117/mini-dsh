@@ -125,6 +125,10 @@ MINI_DSH_MAX_ACTIVATED_TOOLS=24
 
 Still intentionally outside the current runtime scope are semantic no-progress detection, a steering queue, a full model configuration center, and a TUI/Web UI. The sandbox remains an application-level path/command policy with approval, not a kernel isolation boundary.
 
+## Evaluation
+
+Run `pnpm eval:tool-routing` for the V0 deterministic mock evaluation of Harness Tool Visibility policies. It is not a production-model quality benchmark. Real-model evaluation, filesystem and long-horizon tasks, and fault injection are future work.
+
 ## For beginners: write it from scratch
 
 Do not read the whole repo first. Skim **[ARCHITECTURE.md](./ARCHITECTURE.md)** to build the overall picture, then create a new empty project and write it yourself, milestone by milestone, following **[LEARNING.md](./LEARNING.md)**.

@@ -75,11 +75,29 @@ test('long-history compaction lowers peak request and cumulative estimated input
     assert.ok(compacted.estimatedInputTokens < fullHistory.estimatedInputTokens)
 })
 
-test('compacted recent-context case retains markers from model-visible request messages', async () => {
+test('recent-context markers come from separate one-time results and survive a post-marker compaction', async () => {
     const report = await runEvalSuite(createContextPressureSuite())
     const compacted = resultFor(report, 'recent-context-preservation', 'compacted')
     assert.equal(compacted.scoreDetails.recentContextPreserved, true)
-    assert.equal(compacted.scoreDetails.goalPreserved, true)
+    assert.equal(compacted.scoreDetails.goalPreservedAfterCompaction, true)
+    assert.equal(compacted.scoreDetails.finishGoalPreservedAfterCompaction, true)
+    assert.ok(compacted.scoreDetails.postMarkerCompactedChecks.length >= 1)
+    assert.ok(compacted.scoreDetails.postMarkerCompactedChecks.every(Boolean))
+    assert.deepEqual(
+        compacted.scoreDetails.markerDistribution.map(({ marker, toolCallIds }) => [
+            marker,
+            toolCallIds.length,
+        ]),
+        [
+            ['CHECKPOINT_ALPHA', 1],
+            ['CHECKPOINT_BETA', 1],
+            ['FINAL_REQUIRED_STATE', 1],
+        ],
+    )
+    const sourceIds = compacted.scoreDetails.markerDistribution.map(
+        ({ toolCallIds }) => toolCallIds[0],
+    )
+    assert.deepEqual(sourceIds, ['read_chunk-05', 'read_chunk-06', 'read_chunk-07'])
 })
 
 test('protocol case completes every Tool Call and keeps compaction boundaries safe', async () => {
@@ -89,8 +107,17 @@ test('protocol case completes every Tool Call and keeps compaction boundaries sa
     assert.equal(compacted.scoreDetails.protocolBoundarySafe, true)
 })
 
-test('compaction appends events without deleting durable events and summaries remain assistant context', async () => {
+test('every compacted case keeps summaries safe and protocol compaction preserves durable events', async () => {
     const report = await runEvalSuite(createContextPressureSuite())
+    for (const compacted of report.results.filter((entry) => entry.variant === 'compacted')) {
+        assert.equal(compacted.scoreDetails.summarySafetyPreserved, true, compacted.caseName)
+        assert.equal(compacted.scoreDetails.goalPreservedAfterCompaction, true, compacted.caseName)
+        assert.equal(
+            compacted.scoreDetails.finishGoalPreservedAfterCompaction,
+            true,
+            compacted.caseName,
+        )
+    }
     const compacted = resultFor(report, 'tool-protocol-pressure', 'compacted')
     assert.equal(compacted.scoreDetails.originalEventsPreserved, true)
     assert.equal(compacted.scoreDetails.summarySafetyPreserved, true)

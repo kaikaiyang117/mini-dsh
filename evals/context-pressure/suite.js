@@ -21,10 +21,15 @@ export function createContextPressureSuite() {
                 'peak input/request',
                 'estimated input/run',
                 'compactions',
+                'compactions/request',
             ],
             rows: VARIANTS.map((variant) => {
                 const results = report.results.filter((result) => result.variant === variant)
                 const summary = report.variants[variant]
+                const compactions = results.reduce(
+                    (total, result) => total + result.scoreDetails.compactionCount,
+                    0,
+                )
                 return [
                     variant,
                     `${summary.successes}/${summary.cases}`,
@@ -32,10 +37,10 @@ export function createContextPressureSuite() {
                     summary.totalRequestCount,
                     Math.max(...results.flatMap((result) => result.estimatedInputTokensByStep)),
                     format(summary.avgEstimatedInputTokens),
-                    results.reduce(
-                        (total, result) => total + result.scoreDetails.compactionCount,
-                        0,
-                    ),
+                    compactions,
+                    summary.totalRequestCount === 0
+                        ? 'n/a'
+                        : (compactions / summary.totalRequestCount).toFixed(2),
                 ]
             }),
         }),
@@ -75,6 +80,16 @@ export function assertContextPressureResults(report) {
         if (entry.variant === 'compacted' && entry.scoreDetails.compactionCount < 1) {
             throw new Error(`${entry.caseName} must compact at least once in compacted mode`)
         }
+        if (
+            entry.variant === 'compacted' &&
+            (!entry.scoreDetails.summarySafetyPreserved ||
+                !entry.scoreDetails.goalPreservedAfterCompaction ||
+                !entry.scoreDetails.finishGoalPreservedAfterCompaction)
+        ) {
+            throw new Error(
+                `${entry.caseName} must preserve safe summaries and the goal after compaction`,
+            )
+        }
     }
 
     const recent = result('recent-context-preservation', 'compacted')
@@ -90,9 +105,6 @@ export function assertContextPressureResults(report) {
         throw new Error(
             'compaction must preserve durable events and complete Tool protocol boundaries',
         )
-    }
-    if (!protocol.scoreDetails.summarySafetyPreserved) {
-        throw new Error('compaction summary must remain assistant historical context')
     }
 }
 

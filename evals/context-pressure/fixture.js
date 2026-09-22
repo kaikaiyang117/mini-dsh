@@ -63,7 +63,7 @@ export async function createContextPressureFixture({ evalCase, variant, limits =
     })
     const state = { readCount: 0, batchCount: 0, finished: false }
     const llmRequests = []
-    const markerChecks = []
+    const postMarkerCompactedChecks = []
 
     tools.register({
         name: 'read_chunk',
@@ -72,11 +72,18 @@ export async function createContextPressureFixture({ evalCase, variant, limits =
         async execute() {
             state.readCount += 1
             const marker = `CHUNK_${String(state.readCount).padStart(2, '0')}`
-            const markerText =
+            const requiredMarker =
                 evalCase.scenario === 'recent-context-preservation'
-                    ? `${REQUIRED_RECENT_MARKERS.join(' ')} `
-                    : ''
-            return `${marker} ${markerText}${'deterministic context payload '.repeat(CHUNK_SIZE / 30)}`
+                    ? REQUIRED_RECENT_MARKERS[state.readCount - 5]
+                    : undefined
+            const markerText = requiredMarker ? `${requiredMarker} ` : ''
+            const payloadRepeats =
+                evalCase.scenario === 'recent-context-preservation'
+                    ? state.readCount === 7
+                        ? 80
+                        : 2
+                    : CHUNK_SIZE / 30
+            return `${marker} ${markerText}${'deterministic context payload '.repeat(payloadRepeats)}`
         },
     })
     for (const toolName of ['inspect_left', 'inspect_right']) {
@@ -113,15 +120,19 @@ export async function createContextPressureFixture({ evalCase, variant, limits =
                     system: request.system,
                     messages: structuredClone(request.messages),
                     compactionCount,
+                    finishTaskRequested: false,
                 }
                 llmRequests.push(capturedRequest)
                 const requestText = capturedRequest.messages
                     .map((message) => message.content ?? '')
                     .join('\n')
+                const hasGoal = requestText.includes('GOAL_MARKER_CONTEXT_EVAL')
+                const canFinish = hasGoal && (variant !== 'compacted' || compactionCount > 0)
 
                 if (state.finished) return { content: 'evaluation task completed', toolCalls: [] }
                 if (evalCase.scenario === 'long-history-pressure') {
-                    if (state.readCount >= 9 && requestText.includes('GOAL_MARKER_CONTEXT_EVAL')) {
+                    if (state.readCount >= 9 && canFinish) {
+                        capturedRequest.finishTaskRequested = true
                         return call('finish_task', requestCount(llmRequests.length))
                     }
                     return call('read_chunk', requestCount(llmRequests.length))
@@ -130,18 +141,18 @@ export async function createContextPressureFixture({ evalCase, variant, limits =
                     const markersVisible = REQUIRED_RECENT_MARKERS.every((marker) =>
                         requestText.includes(marker),
                     )
-                    if (compactionCount > 0) markerChecks.push(markersVisible)
-                    if (
-                        state.readCount >= 8 &&
-                        markersVisible &&
-                        requestText.includes('GOAL_MARKER_CONTEXT_EVAL')
-                    ) {
+                    if (state.readCount >= 7 && compactionCount > 0) {
+                        postMarkerCompactedChecks.push(markersVisible)
+                    }
+                    if (state.readCount >= 7 && markersVisible && canFinish) {
+                        capturedRequest.finishTaskRequested = true
                         return call('finish_task', requestCount(llmRequests.length))
                     }
                     return call('read_chunk', requestCount(llmRequests.length))
                 }
                 if (evalCase.scenario === 'tool-protocol-pressure') {
-                    if (state.batchCount >= 6 && requestText.includes('GOAL_MARKER_CONTEXT_EVAL')) {
+                    if (state.batchCount >= 6 && canFinish) {
+                        capturedRequest.finishTaskRequested = true
                         return call('finish_task', requestCount(llmRequests.length))
                     }
                     state.batchCount += 1
@@ -187,7 +198,7 @@ export async function createContextPressureFixture({ evalCase, variant, limits =
             llmRequests,
             contextManager,
             internalContextMeter,
-            markerChecks,
+            postMarkerCompactedChecks,
             preservedEvents,
         },
         async dispose() {
@@ -229,13 +240,22 @@ export function scoreContextPressure({ trace, expected, variant, evalCase, fixtu
     const originalEventsPreserved =
         JSON.stringify(events.filter((event) => event.type !== 'context/compaction')) ===
         JSON.stringify(inspectors.preservedEvents)
-    const goalPreserved = inspectors.llmRequests.some((request) =>
-        request.messages.some((message) =>
-            String(message.content ?? '').includes('GOAL_MARKER_CONTEXT_EVAL'),
-        ),
-    )
     const compactedRequests = inspectors.llmRequests.filter(
         (request) => request.compactionCount > 0,
+    )
+    const goalPreservedAfterCompaction =
+        compactedRequests.length > 0 &&
+        compactedRequests.every((request) =>
+            request.messages.some((message) =>
+                String(message.content ?? '').includes('GOAL_MARKER_CONTEXT_EVAL'),
+            ),
+        )
+    const finishGoalPreservedAfterCompaction = compactedRequests.some(
+        (request) =>
+            request.finishTaskRequested &&
+            request.messages.some((message) =>
+                String(message.content ?? '').includes('GOAL_MARKER_CONTEXT_EVAL'),
+            ),
     )
     const summarySafetyPreserved = compactedRequests.every(
         (request) =>
@@ -252,16 +272,26 @@ export function scoreContextPressure({ trace, expected, variant, evalCase, fixtu
     const recentContextPreserved =
         evalCase.scenario !== 'recent-context-preservation' ||
         (variant === 'compacted'
-            ? inspectors.markerChecks.length > 0 && inspectors.markerChecks.every(Boolean)
+            ? inspectors.postMarkerCompactedChecks.length > 0 &&
+              inspectors.postMarkerCompactedChecks.every(Boolean)
             : inspectors.llmRequests.some((request) => {
                   const text = request.messages.map((message) => message.content ?? '').join('\n')
                   return REQUIRED_RECENT_MARKERS.every((marker) => text.includes(marker))
               }))
+    const markerDistribution = REQUIRED_RECENT_MARKERS.map((marker) => ({
+        marker,
+        toolCallIds: results
+            .filter((result) => String(result.data.content ?? '').includes(marker))
+            .map((result) => result.data.toolCallId),
+    }))
     const completionMatches = trace.stopReason === expectedStopReason
     const success =
         completionMatches &&
         (variant === 'constrained' ? !finishSucceeded : finishSucceeded) &&
         (variant !== 'compacted' || compactions.length > 0) &&
+        (variant !== 'compacted' ||
+            (goalPreservedAfterCompaction && finishGoalPreservedAfterCompaction)) &&
+        (variant !== 'compacted' || summarySafetyPreserved) &&
         (evalCase.scenario !== 'recent-context-preservation' ||
             variant !== 'compacted' ||
             recentContextPreserved) &&
@@ -276,8 +306,11 @@ export function scoreContextPressure({ trace, expected, variant, evalCase, fixtu
             protocolComplete,
             protocolBoundarySafe,
             originalEventsPreserved,
-            goalPreserved,
+            goalPreservedAfterCompaction,
+            finishGoalPreservedAfterCompaction,
             recentContextPreserved,
+            postMarkerCompactedChecks: [...inspectors.postMarkerCompactedChecks],
+            markerDistribution,
             summarySafetyPreserved,
             internalContextEstimateCalls: inspectors.internalContextMeter.estimateCount,
             modelRequestCount: inspectors.llmRequests.length,

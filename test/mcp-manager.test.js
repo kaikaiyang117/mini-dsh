@@ -1,15 +1,20 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import test from 'node:test'
 import { pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import { MCP_STATES, McpManager } from '../src/core/mcp-manager.js'
 import * as externalPlugins from '../src/plugins/external-plugins.js'
+import * as llmPlugin from '../src/plugins/llm.js'
 import * as mcpPlugin from '../src/plugins/mcp.js'
 import * as toolsPlugin from '../src/plugins/tools.js'
 
 const fakePlugin = pathToFileURL(path.resolve('test/fixtures/fake-mcp-plugin.js')).href
 const failingPlugin = pathToFileURL(path.resolve('test/fixtures/failing-mcp-plugin.js')).href
+const llmDependentPlugin = pathToFileURL(
+    path.resolve('test/fixtures/llm-dependent-external-plugin.js'),
+).href
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -367,6 +372,72 @@ test('dispose cleans up all active fibers', async () => {
     assert.deepEqual(manager.list(), [])
 })
 
+test('manager dispose rejects on partial cleanup failure and retries retained fibers', async () => {
+    let serverADisposals = 0
+    let serverBDisposals = 0
+    const manager = new McpManager({
+        activate: async ({ name }) => ({
+            dispose: async () => {
+                if (name === 'server-a') {
+                    serverADisposals += 1
+                    return
+                }
+                serverBDisposals += 1
+                if (serverBDisposals === 1) throw new Error('server-b cleanup failed')
+            },
+        }),
+    })
+    manager.register({ name: 'server-a' })
+    manager.register({ name: 'server-b' })
+    await Promise.all([manager.connect('server-a'), manager.connect('server-b')])
+
+    await assert.rejects(() => manager.dispose(), /server-b cleanup failed/)
+    assert.equal(serverADisposals, 1)
+    assert.equal(serverBDisposals, 1)
+    assert.equal(manager.get('server-a').state, MCP_STATES.DISCONNECTED)
+    assert.equal(manager.get('server-b').state, MCP_STATES.FAILED)
+    assert.equal(manager.get('server-b').lastError.message, 'server-b cleanup failed')
+    assert.equal(manager.list().length, 2)
+
+    await manager.dispose()
+    assert.equal(serverADisposals, 1)
+    assert.equal(serverBDisposals, 2)
+    assert.deepEqual(manager.list(), [])
+    assert.throws(() => manager.register({ name: 'too-late' }), /disposing or disposed/)
+    await assert.rejects(() => manager.connect('server-b'), /disposing or disposed/)
+})
+
+test('concurrent manager dispose calls share one shutdown operation', async () => {
+    let releaseDispose
+    const disposeGate = new Promise((resolve) => {
+        releaseDispose = resolve
+    })
+    let disposeCount = 0
+    const manager = new McpManager({
+        activate: async () => ({
+            dispose: async () => {
+                disposeCount += 1
+                await disposeGate
+            },
+        }),
+    })
+    manager.register({ name: 'context7' })
+    await manager.connect('context7')
+
+    const firstDispose = manager.dispose()
+    const secondDispose = manager.dispose()
+    assert.equal(disposeCount, 0)
+    assert.throws(() => manager.register({ name: 'too-late' }), /disposing or disposed/)
+    await assert.rejects(() => manager.connect('context7'), /disposing or disposed/)
+    await assert.rejects(() => manager.reload('context7'), /disposing or disposed/)
+    await delay(0)
+    assert.equal(disposeCount, 1)
+    releaseDispose()
+    await Promise.all([firstDispose, secondDispose])
+    assert.equal(disposeCount, 1)
+    assert.deepEqual(manager.list(), [])
+})
+
 test('Cordis adapter owns fake MCP tool lifecycle', async () => {
     const root = new Context()
     try {
@@ -425,6 +496,34 @@ test('ordinary external Cordis plugins remain loadable through the generic loade
             entries: [{ package: fakePlugin }],
         })
         assert.ok(root.tools.get('mcp__fake__echo'))
+    } finally {
+        await root.fiber.dispose()
+    }
+})
+
+test('standard startup installs llm before loading external plugins that inject it', async () => {
+    const root = new Context()
+    try {
+        await root.plugin(llmPlugin)
+        await root.plugin(externalPlugins, {
+            entries: [{ package: llmDependentPlugin }],
+        })
+        const { activatedWithLlm } = await import(llmDependentPlugin)
+        assert.equal(activatedWithLlm, true)
+
+        const entry = await readFile(new URL('../src/index.js', import.meta.url), 'utf8')
+        assert.ok(
+            entry.indexOf('await root.plugin(llm)') <
+                entry.indexOf('await root.plugin(externalPlugins'),
+        )
+        assert.ok(
+            entry.indexOf('await root.plugin(files') <
+                entry.indexOf('await root.plugin(externalPlugins'),
+        )
+        assert.ok(
+            entry.indexOf('await root.plugin(externalPlugins') <
+                entry.indexOf('await root.plugin(cli'),
+        )
     } finally {
         await root.fiber.dispose()
     }

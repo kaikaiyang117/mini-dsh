@@ -15,6 +15,7 @@ export class McpManager {
     #records = new Map()
     #activate
     #disposed = false
+    #disposePromise = null
 
     constructor({ activate } = {}) {
         if (typeof activate !== 'function') {
@@ -100,6 +101,7 @@ export class McpManager {
     }
 
     async unregister(name) {
+        this.#assertOpen()
         const record = this.#records.get(name)
         if (!record) return
         record.removing = true
@@ -114,14 +116,23 @@ export class McpManager {
 
     async dispose() {
         if (this.#disposed) return
-        this.#disposed = true
+        if (this.#disposePromise) return this.#disposePromise
+
         const records = [...this.#records.values()]
-        await Promise.all(
-            records.map((record) =>
-                this.#enqueue(record, () => this.#disconnectUnlocked(record)).catch(() => {}),
-            ),
-        )
-        this.#records.clear()
+        const shutdown = Promise.allSettled(
+            records.map((record) => this.#enqueue(record, () => this.#disconnectUnlocked(record))),
+        ).then((results) => {
+            const failure = results.find((result) => result.status === 'rejected')
+            if (failure) throw failure.reason
+            this.#records.clear()
+            this.#disposed = true
+        })
+
+        this.#disposePromise = shutdown.catch((error) => {
+            this.#disposePromise = null
+            throw error
+        })
+        return this.#disposePromise
     }
 
     #enqueue(record, operation) {
@@ -190,7 +201,9 @@ export class McpManager {
     }
 
     #assertOpen() {
-        if (this.#disposed) throw new Error('McpManager is disposed')
+        if (this.#disposed || this.#disposePromise) {
+            throw new Error('McpManager is disposing or disposed')
+        }
     }
 
     #assertNotRemoving(record) {

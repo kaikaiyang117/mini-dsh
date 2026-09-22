@@ -35,7 +35,6 @@ await root.plugin(sessions, {
 await root.plugin(systemPrompt)
 await root.plugin(tools)
 await root.plugin(mcp, { servers: mcpConfig })
-await root.plugin(externalPlugins, { entries: externalPluginConfig })
 await root.plugin(llm)
 await root.plugin(trace)
 await root.plugin(agents)
@@ -53,6 +52,7 @@ await root.plugin(sandbox, { workspace })
 await root.plugin(deepseek)
 await root.plugin(bash, { workspace })
 await root.plugin(files, { workspace })
+await root.plugin(externalPlugins, { entries: externalPluginConfig })
 
 await root.plugin(cli, {
     model: process.env.MINI_DSH_MODEL ?? 'deepseek/deepseek-v4-pro',

@@ -28,7 +28,7 @@ const EXPECTED_PATCHES = Object.freeze({
     retryAfter: 'const retries = DEFAULT_RETRIES',
 })
 const MODEL = 'long-horizon-mock/deterministic'
-const TEST_COMMAND = 'node --test --test-reporter=./test/eval-reporter.js'
+const TEST_COMMAND = 'env -u NODE_TEST_CONTEXT node --test --test-reporter=./test/eval-reporter.js'
 const MAX_VISIBLE_TOOLS = 8
 const POLICY = Object.freeze({ maxSteps: 16, maxToolCalls: 24 })
 
@@ -235,11 +235,18 @@ export function scoreLongHorizon({ trace, evalCase, fixture }) {
     ).length
 
     const finalFiles = Object.fromEntries(
-        Object.keys(initialFiles).map((relativePath) => [
+        listWorkspaceFiles(workspace).map((relativePath) => [
             relativePath,
             readFileSync(path.join(workspace, relativePath), 'utf8'),
         ]),
     )
+    const workspaceChangedFiles = [
+        ...new Set([...Object.keys(initialFiles), ...Object.keys(finalFiles)]),
+    ]
+        .filter((file) => initialFiles[file] !== finalFiles[file])
+        .sort()
+    const modifiedFiles = new Set(evalCase.modifiedFiles)
+    const unexpectedModifiedFiles = workspaceChangedFiles.filter((file) => !modifiedFiles.has(file))
     const targetContents = finalFiles[evalCase.targetFile] ?? ''
     const targetCorrect =
         evalCase.task === 'cross-file-change'
@@ -250,12 +257,12 @@ export function scoreLongHorizon({ trace, evalCase, fixture }) {
     const requiredReadsSatisfied = evalCase.requiredReadFiles.every((file) =>
         filesRead.includes(file),
     )
-    const requiredModificationsSatisfied = evalCase.modifiedFiles.every((file) =>
-        filesModified.includes(file),
+    const requiredModificationsSatisfied = evalCase.modifiedFiles.every(
+        (file) => filesModified.includes(file) && workspaceChangedFiles.includes(file),
     )
-    const noForbiddenFileChanges = evalCase.unchangedFiles.every(
-        (file) => finalFiles[file] === initialFiles[file],
-    )
+    const noForbiddenFileChanges = unexpectedModifiedFiles.length === 0
+    const testExitCodes = testRuns.map((result) => result.exitCode)
+    const initialTestsFailed = testExitCodes.length >= 2 && testExitCodes[0] !== 0
     const noWorkspaceExternalWrites = toolCalls
         .filter(({ call }) => ['edit_file', 'write_file'].includes(call.name))
         .every(({ call }) => isWorkspaceRelativePath(call.arguments.path))
@@ -272,12 +279,16 @@ export function scoreLongHorizon({ trace, evalCase, fixture }) {
     const scoreDetails = {
         filesRead,
         filesModified,
+        workspaceChangedFiles,
+        unexpectedModifiedFiles,
+        testExitCodes,
         testRuns: testRuns.length,
         toolFailures,
         compactionCount,
         progressStops,
         reminderCount,
         finalTestsPassed,
+        initialTestsFailed,
         protocolComplete,
         targetCorrect,
         requiredReadsSatisfied,
@@ -304,10 +315,12 @@ export function scoreLongHorizon({ trace, evalCase, fixture }) {
             ),
         ) &&
         targetCorrect &&
+        initialTestsFailed &&
         finalTestsPassed &&
         requiredReadsSatisfied &&
         requiredModificationsSatisfied &&
         noForbiddenFileChanges &&
+        unexpectedModifiedFiles.length === 0 &&
         workspaceFilesOnly &&
         noWorkspaceExternalWrites &&
         bashStayedInWorkspace &&

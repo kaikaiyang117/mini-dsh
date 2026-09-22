@@ -11,7 +11,6 @@ export const LONG_HORIZON_CASES = Object.freeze([
         targetFile: 'src/calculator.js',
         requiredReadFiles: ['src/calculator.js'],
         modifiedFiles: ['src/calculator.js'],
-        unchangedFiles: ['src/unrelated.js', 'test/calculator.test.js'],
     },
     {
         name: 'cross-file-change',
@@ -26,7 +25,6 @@ export const LONG_HORIZON_CASES = Object.freeze([
         targetFile: 'src/runner.js',
         requiredReadFiles: ['src/config.js', 'src/runner.js'],
         modifiedFiles: ['src/runner.js'],
-        unchangedFiles: ['src/config.js', 'src/unrelated.js', 'test/runner.test.js'],
     },
     {
         name: 'failed-first-search',
@@ -41,7 +39,6 @@ export const LONG_HORIZON_CASES = Object.freeze([
         targetFile: 'src/calculator.js',
         requiredReadFiles: ['src/calculator.js'],
         modifiedFiles: ['src/calculator.js'],
-        unchangedFiles: ['src/unrelated.js', 'test/calculator.test.js'],
     },
     {
         name: 'failed-edit-recovery',
@@ -55,7 +52,6 @@ export const LONG_HORIZON_CASES = Object.freeze([
         targetFile: 'src/calculator.js',
         requiredReadFiles: ['src/calculator.js'],
         modifiedFiles: ['src/calculator.js'],
-        unchangedFiles: ['src/unrelated.js', 'test/calculator.test.js'],
     },
     {
         name: 'large-context-fix',
@@ -70,6 +66,5 @@ export const LONG_HORIZON_CASES = Object.freeze([
         targetFile: 'src/calculator.js',
         requiredReadFiles: ['src/legacy-catalog.js', 'src/calculator.js'],
         modifiedFiles: ['src/calculator.js'],
-        unchangedFiles: ['src/legacy-catalog.js', 'src/unrelated.js', 'test/calculator.test.js'],
     },
 ])

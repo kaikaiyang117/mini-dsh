@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync } from 'node:fs'
+import { existsSync, writeFileSync } from 'node:fs'
 import test from 'node:test'
 import { LONG_HORIZON_CASES } from '../evals/long-horizon/cases.js'
 import { createLongHorizonFixture, scoreLongHorizon } from '../evals/long-horizon/fixture.js'
@@ -44,6 +44,11 @@ test('baseline and managed both produce correct final workspaces with complete T
         assert.equal(evalResult.scoreDetails.finalTestsPassed, true)
         assert.equal(evalResult.scoreDetails.requiredReadsSatisfied, true)
         assert.equal(evalResult.scoreDetails.requiredModificationsSatisfied, true)
+        assert.deepEqual(
+            evalResult.scoreDetails.workspaceChangedFiles,
+            evalResult.scoreDetails.filesModified,
+        )
+        assert.deepEqual(evalResult.scoreDetails.unexpectedModifiedFiles, [])
         assert.equal(evalResult.scoreDetails.noForbiddenFileChanges, true)
         assert.equal(evalResult.scoreDetails.workspaceFilesOnly, true)
         assert.equal(evalResult.scoreDetails.noWorkspaceExternalWrites, true)
@@ -54,8 +59,16 @@ test('baseline and managed both produce correct final workspaces with complete T
         assert.equal(evalResult.requestCount, evalResult.estimatedInputTokensByStep.length)
         assert.ok(evalResult.steps >= 6 && evalResult.steps <= 12)
         assert.equal(evalResult.scoreDetails.testRuns, 2)
+        assert.deepEqual(evalResult.scoreDetails.testExitCodes, [1, 0])
+        assert.equal(evalResult.scoreDetails.initialTestsFailed, true)
+        assert.equal(evalResult.scoreDetails.finalTestsPassed, true)
     }
     for (const evalCase of LONG_HORIZON_CASES) {
+        for (const variant of VARIANTS) {
+            const scored = resultFor(result, evalCase.name, variant).scoreDetails
+            assert.deepEqual(scored.workspaceChangedFiles, evalCase.modifiedFiles)
+            assert.deepEqual(scored.unexpectedModifiedFiles, [])
+        }
         assert.deepEqual(
             resultFor(result, evalCase.name, 'managed').scoreDetails.toolSequence,
             resultFor(result, evalCase.name, 'baseline').scoreDetails.toolSequence,
@@ -125,6 +138,53 @@ test('fixture scorer can inspect the workspace before dispose removes it', async
         await fixture.dispose()
     }
     assert.equal(existsSync(workspace), false)
+})
+
+test('scorer rejects unrelated workspace mutations even when the target patch and tests pass', async () => {
+    const evalCase = LONG_HORIZON_CASES[0]
+    const fixture = await createLongHorizonFixture({ evalCase, variant: 'baseline' })
+    try {
+        await fixture.agent.send(evalCase.prompt)
+        const unrelatedPath = `${fixture.inspectors.workspace}/src/unrelated.js`
+        writeFileSync(
+            unrelatedPath,
+            `${fixture.inspectors.initialFiles['src/unrelated.js']}\n// unexpected`,
+        )
+        const score = scoreLongHorizon({
+            trace: fixture.trace.latest(),
+            evalCase,
+            fixture,
+        })
+        assert.deepEqual(score.details.unexpectedModifiedFiles, ['src/unrelated.js'])
+        assert.equal(score.details.targetCorrect, true)
+        assert.equal(score.details.finalTestsPassed, true)
+        assert.equal(score.success, false)
+    } finally {
+        await fixture.dispose()
+    }
+})
+
+test('successful write records do not satisfy required modification without a final file diff', async () => {
+    const evalCase = LONG_HORIZON_CASES[0]
+    const fixture = await createLongHorizonFixture({ evalCase, variant: 'baseline' })
+    try {
+        await fixture.agent.send(evalCase.prompt)
+        writeFileSync(
+            `${fixture.inspectors.workspace}/${evalCase.targetFile}`,
+            fixture.inspectors.initialFiles[evalCase.targetFile],
+        )
+        const score = scoreLongHorizon({
+            trace: fixture.trace.latest(),
+            evalCase,
+            fixture,
+        })
+        assert.ok(score.details.filesModified.includes(evalCase.targetFile))
+        assert.equal(score.details.workspaceChangedFiles.includes(evalCase.targetFile), false)
+        assert.equal(score.details.requiredModificationsSatisfied, false)
+        assert.equal(score.success, false)
+    } finally {
+        await fixture.dispose()
+    }
 })
 
 function resultFor(report, caseName, variant) {

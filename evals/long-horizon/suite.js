@@ -60,6 +60,7 @@ export function assertLongHorizonResults(report) {
         }
         for (const key of [
             'finalTestsPassed',
+            'initialTestsFailed',
             'targetCorrect',
             'requiredReadsSatisfied',
             'requiredModificationsSatisfied',

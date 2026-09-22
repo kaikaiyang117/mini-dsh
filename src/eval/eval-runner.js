@@ -117,17 +117,17 @@ export class EvalRunner {
             throw new Error(`Eval fixture did not capture a Trace for ${evalCase.name}/${variant}`)
         const score = this.scorer(trace, evalCase.expected)
         const requests = fixture.recordingTokenMeter.requests
-        const visibleToolCount = requests.reduce(
-            (total, request) => total + request.visibleToolCount,
-            0,
-        )
+        const visibleToolCountByStep = requests.map((request) => request.visibleToolCount)
+        // Total tool exposure across model requests, not a count of distinct tools.
+        const visibleToolCount = visibleToolCountByStep.reduce((total, count) => total + count, 0)
         const toolSchemaTokensByStep = requests.map((request) => request.toolSchemaTokens)
+        const estimatedInputTokensByStep = requests.map((request) => request.estimatedInputTokens)
 
         return {
             caseName: evalCase.name,
             variant,
             success: !error && score.success,
-            durationMs: Math.max(0, performance.now() - startedAt),
+            durationMs: trace.durationMs,
             steps: trace.steps.length,
             toolCalls: trace.steps.reduce((total, step) => total + step.toolCalls.length, 0),
             inputTokens: trace.usage.inputTokens,
@@ -135,13 +135,20 @@ export class EvalRunner {
             reasoningTokens: trace.usage.reasoningTokens,
             cost: trace.usage.cost,
             stopReason: trace.stopReason,
+            requestCount: requests.length,
             visibleToolCount,
+            visibleToolCountByStep,
             maxVisibleToolCount: requests.reduce(
                 (largest, request) => Math.max(largest, request.visibleToolCount),
                 0,
             ),
             toolSchemaTokens: toolSchemaTokensByStep.reduce((total, tokens) => total + tokens, 0),
             toolSchemaTokensByStep,
+            estimatedInputTokens: estimatedInputTokensByStep.reduce(
+                (total, tokens) => total + tokens,
+                0,
+            ),
+            estimatedInputTokensByStep,
             targetToolCalled: score.targetToolCalled,
             targetToolSucceeded: score.targetToolSucceeded,
             error,
@@ -162,10 +169,14 @@ function failedResult(evalCase, variant, durationMs, error) {
         reasoningTokens: null,
         cost: null,
         stopReason: 'internal_error',
+        requestCount: 0,
         visibleToolCount: 0,
+        visibleToolCountByStep: [],
         maxVisibleToolCount: 0,
         toolSchemaTokens: 0,
         toolSchemaTokensByStep: [],
+        estimatedInputTokens: 0,
+        estimatedInputTokensByStep: [],
         targetToolCalled: false,
         targetToolSucceeded: false,
         error: normalizeError(error),

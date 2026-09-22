@@ -13,11 +13,13 @@ const outputPath = '.eval/tool-routing.json'
 await mkdir('.eval', { recursive: true })
 await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8')
 
-console.log('| variant | success | avg visible tools | schema tokens | avg steps |')
-console.log('| --- | ---: | ---: | ---: | ---: |')
+console.log(
+    '| variant | success | avg tools/request | schema tokens/request | estimated input tokens | avg steps |',
+)
+console.log('| --- | ---: | ---: | ---: | ---: | ---: |')
 for (const [variant, summary] of Object.entries(report.variants)) {
     console.log(
-        `| ${variant} | ${summary.successes}/${summary.cases} | ${format(summary.avgVisibleTools)} | ${summary.totalToolSchemaTokens} | ${format(summary.avgSteps)} |`,
+        `| ${variant} | ${summary.successes}/${summary.cases} | ${format(summary.avgVisibleTools)} | ${format(summary.avgToolSchemaTokensPerRequest)} | ${format(summary.avgEstimatedInputTokens)} | ${format(summary.avgSteps)} |`,
     )
 }
 console.log(`\nMachine-readable report: ${outputPath}`)

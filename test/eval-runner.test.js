@@ -104,8 +104,32 @@ test('RecordingTokenMeter returns the real estimate and counts only request Tool
         {
             visibleToolCount: 1,
             toolSchemaTokens: tokenMeter.estimateRequest({ tools: request.tools }).tokens,
+            estimatedInputTokens: tokenMeter.estimateRequest(request).tokens,
         },
     ])
+})
+
+test('Eval duration uses Trace run duration and excludes fixture setup and disposal', async () => {
+    const report = await new EvalRunner({
+        cases: [{ name: 'duration', prompt: 'run', expected: { targetTool: 'target' } }],
+        fixtureFactory: async () => {
+            await new Promise((resolve) => setTimeout(resolve, 5))
+            return {
+                agent: {
+                    async send() {
+                        await new Promise((resolve) => setTimeout(resolve, 5))
+                    },
+                },
+                trace: { latest: () => successfulTrace({ durationMs: 37 }) },
+                recordingTokenMeter: new RecordingTokenMeter(),
+                async dispose() {
+                    await new Promise((resolve) => setTimeout(resolve, 5))
+                },
+            }
+        },
+    }).run()
+
+    assert.equal(report.results[0].durationMs, 37)
 })
 
 test('Captured Trace exposes the production steps, Tool calls, and stop reason', async () => {
@@ -133,11 +157,16 @@ test('summary aggregation keeps unknown provider usage unavailable, not zero', (
             {
                 variant: 'all',
                 success: true,
-                steps: 2,
+                steps: 5,
                 toolCalls: 1,
+                requestCount: 2,
                 visibleToolCount: 10,
+                visibleToolCountByStep: [4, 6],
                 maxVisibleToolCount: 5,
                 toolSchemaTokens: 90,
+                toolSchemaTokensByStep: [40, 50],
+                estimatedInputTokens: 240,
+                estimatedInputTokensByStep: [100, 140],
                 inputTokens: null,
                 outputTokens: null,
                 reasoningTokens: null,
@@ -158,6 +187,11 @@ test('summary aggregation keeps unknown provider usage unavailable, not zero', (
     assert.equal(report.costAvailability, 'unavailable')
     assert.equal(report.avgVisibleTools, 5)
     assert.equal(report.totalToolSchemaTokens, 90)
+    assert.equal(report.avgToolSchemaTokensPerRequest, 45)
+    assert.equal(report.totalEstimatedInputTokens, 240)
+    assert.equal(report.avgEstimatedInputTokens, 240)
+    assert.equal(report.avgEstimatedInputTokensPerRequest, 120)
+    assert.equal(report.totalRequestCount, 2)
 })
 
 test('repeated Eval runs keep all functional metrics deterministic', async () => {
@@ -171,10 +205,14 @@ test('repeated Eval runs keep all functional metrics deterministic', async () =>
             success: result.success,
             steps: result.steps,
             toolCalls: result.toolCalls,
+            requestCount: result.requestCount,
             visibleToolCount: result.visibleToolCount,
+            visibleToolCountByStep: result.visibleToolCountByStep,
             maxVisibleToolCount: result.maxVisibleToolCount,
             toolSchemaTokens: result.toolSchemaTokens,
             toolSchemaTokensByStep: result.toolSchemaTokensByStep,
+            estimatedInputTokens: result.estimatedInputTokens,
+            estimatedInputTokensByStep: result.estimatedInputTokensByStep,
         }))
 
     assert.deepEqual(functionalMetrics(first), functionalMetrics(second))
@@ -187,7 +225,7 @@ test('progressive cross-language Eval searches before target visibility and beat
         cases,
         fixtureFactory: async (...args) => {
             const fixture = await createToolRoutingFixture(...args)
-            fixtures.push({ variant: args[1], fixture })
+            fixtures.push({ caseName: args[0].name, variant: args[1], fixture })
             return fixture
         },
     }).run()
@@ -215,6 +253,10 @@ test('progressive cross-language Eval searches before target visibility and beat
                     request.tools.length,
                 )
                 assert.equal(
+                    fixture.recordingTokenMeter.requests[index].estimatedInputTokens,
+                    new TokenMeter().estimateRequest(request).tokens,
+                )
+                assert.equal(
                     fixture.recordingTokenMeter.requests[index].toolSchemaTokens,
                     new TokenMeter().estimateRequest({ tools: request.tools }).tokens,
                 )
@@ -231,6 +273,25 @@ test('progressive cross-language Eval searches before target visibility and beat
         ({ caseName, variant }) => caseName === 'large-noisy-catalog' && variant === 'progressive',
     )
     assert.ok(progressiveLarge.toolSchemaTokens < allLarge.toolSchemaTokens)
+    assert.ok(progressiveLarge.estimatedInputTokens < allLarge.estimatedInputTokens)
+    assert.equal(allLarge.inputTokens, null)
+    assert.equal(progressiveLarge.inputTokens, null)
+    assert.equal(report.variants.all.inputTokensAvailability, 'unavailable')
+
+    for (const result of report.results) {
+        const fixture = fixtures.find(
+            (item) => item.caseName === result.caseName && item.variant === result.variant,
+        ).fixture
+        assert.equal(result.requestCount, fixture.llmRequests.length)
+        assert.deepEqual(
+            result.visibleToolCountByStep,
+            fixture.llmRequests.map((request) => request.tools.length),
+        )
+        assert.equal(
+            result.visibleToolCount,
+            result.visibleToolCountByStep.reduce((total, count) => total + count, 0),
+        )
+    }
 })
 
 test('CapturingTraceRuntime wraps the TraceRuntime handle contract', async () => {
@@ -246,8 +307,9 @@ test('CapturingTraceRuntime wraps the TraceRuntime handle contract', async () =>
     assert.equal(trace.latest().steps[0].toolCalls[0].status, 'completed')
 })
 
-function successfulTrace() {
+function successfulTrace({ durationMs = 0 } = {}) {
     return {
+        durationMs,
         stopReason: 'completed',
         steps: [{ toolCalls: [{ name: 'target', status: 'completed' }] }],
         usage: { inputTokens: null, outputTokens: null, reasoningTokens: null, cost: null },

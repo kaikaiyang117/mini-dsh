@@ -17,6 +17,7 @@ export class RecordingTokenMeter {
         this.#requests.push({
             visibleToolCount: (request.tools ?? []).length,
             toolSchemaTokens: schemaEstimate.tokens,
+            estimatedInputTokens: estimate.tokens,
         })
         return estimate
     }
@@ -30,13 +31,15 @@ export function summarizeEvalResults(results, variants) {
     return Object.fromEntries(
         variants.map((variant) => {
             const selected = results.filter((result) => result.variant === variant)
-            const steps = sum(selected.map((result) => result.steps))
             const visibleTools = sum(selected.map((result) => result.visibleToolCount))
+            const requestCount = sum(selected.map((result) => result.requestCount))
             const successes = selected.filter((result) => result.success).length
             const inputTokens = summarizeKnownUsage(selected, 'inputTokens')
             const outputTokens = summarizeKnownUsage(selected, 'outputTokens')
             const reasoningTokens = summarizeKnownUsage(selected, 'reasoningTokens')
             const cost = summarizeKnownUsage(selected, 'cost')
+            const estimatedInputTokens = sum(selected.map((result) => result.estimatedInputTokens))
+            const toolSchemaTokens = sum(selected.map((result) => result.toolSchemaTokens))
 
             return [
                 variant,
@@ -46,10 +49,19 @@ export function summarizeEvalResults(results, variants) {
                     successRate: selected.length === 0 ? null : successes / selected.length,
                     avgSteps: average(selected.map((result) => result.steps)),
                     avgToolCalls: average(selected.map((result) => result.toolCalls)),
-                    avgVisibleTools: steps === 0 ? null : visibleTools / steps,
+                    avgVisibleTools: requestCount === 0 ? null : visibleTools / requestCount,
                     maxVisibleTools: max(selected.map((result) => result.maxVisibleToolCount)),
-                    totalToolSchemaTokens: sum(selected.map((result) => result.toolSchemaTokens)),
+                    totalToolSchemaTokens: toolSchemaTokens,
                     avgToolSchemaTokens: average(selected.map((result) => result.toolSchemaTokens)),
+                    avgToolSchemaTokensPerRequest:
+                        requestCount === 0 ? null : toolSchemaTokens / requestCount,
+                    totalEstimatedInputTokens: estimatedInputTokens,
+                    avgEstimatedInputTokens: average(
+                        selected.map((result) => result.estimatedInputTokens),
+                    ),
+                    avgEstimatedInputTokensPerRequest:
+                        requestCount === 0 ? null : estimatedInputTokens / requestCount,
+                    totalRequestCount: requestCount,
                     totalInputTokens: inputTokens.total,
                     inputTokensAvailability: inputTokens.availability,
                     totalOutputTokens: outputTokens.total,

@@ -64,7 +64,7 @@ test('EvalRunner scores stop-reason completion with variant-specific expectation
             },
         ],
         variants: ['baseline', 'guarded'],
-        fixtureFactory: async (_evalCase, variant) => ({
+        fixtureFactory: async ({ variant }) => ({
             agent: { async send() {} },
             trace: {
                 latest: () => ({
@@ -108,7 +108,7 @@ test('a failed Eval case is recorded and later cases still execute', async () =>
         { name: 'broken', prompt: 'fail', expected: { targetTool: 'target' } },
         { name: 'healthy', prompt: 'run', expected: { targetTool: 'target' } },
     ]
-    const fixtureFactory = async (evalCase) => {
+    const fixtureFactory = async ({ evalCase }) => {
         if (evalCase.name === 'broken') throw new Error('fixture failed')
         const recordingTokenMeter = new RecordingTokenMeter()
         return {
@@ -189,7 +189,7 @@ test('Eval duration uses Trace run duration and excludes fixture setup and dispo
 
 test('Captured Trace exposes the production steps, Tool calls, and stop reason', async () => {
     const evalCase = TOOL_ROUTING_CASES[0]
-    const fixture = await createToolRoutingFixture(evalCase, 'all')
+    const fixture = await createToolRoutingFixture({ evalCase, variant: 'all' })
     try {
         await fixture.agent.send(evalCase.prompt)
         const trace = fixture.trace.latest()
@@ -280,9 +280,9 @@ test('progressive cross-language Eval searches before target visibility and beat
     const cases = [TOOL_ROUTING_CASES[2], TOOL_ROUTING_CASES[3], TOOL_ROUTING_CASES[4]]
     const report = await new EvalRunner({
         cases,
-        fixtureFactory: async (...args) => {
-            const fixture = await createToolRoutingFixture(...args)
-            fixtures.push({ caseName: args[0].name, variant: args[1], fixture })
+        fixtureFactory: async ({ evalCase, variant, limits }) => {
+            const fixture = await createToolRoutingFixture({ evalCase, variant, limits })
+            fixtures.push({ caseName: evalCase.name, variant, fixture })
             return fixture
         },
     }).run()
@@ -295,16 +295,18 @@ test('progressive cross-language Eval searches before target visibility and beat
     try {
         const progressiveFixture = fixtures.find(({ variant }) => variant === 'progressive').fixture
         assert.deepEqual(
-            progressiveFixture.llmRequests[0].tools.map((schema) => schema.function.name),
+            progressiveFixture.inspectors.llmRequests[0].tools.map(
+                (schema) => schema.function.name,
+            ),
             ['tool_search'],
         )
         assert.ok(
-            progressiveFixture.llmRequests[1].tools.some(
+            progressiveFixture.inspectors.llmRequests[1].tools.some(
                 (schema) => schema.function.name === 'github_issues_search',
             ),
         )
         for (const { fixture } of fixtures) {
-            for (const [index, request] of fixture.llmRequests.entries()) {
+            for (const [index, request] of fixture.inspectors.llmRequests.entries()) {
                 assert.equal(
                     fixture.recordingTokenMeter.requests[index].visibleToolCount,
                     request.tools.length,
@@ -339,10 +341,10 @@ test('progressive cross-language Eval searches before target visibility and beat
         const fixture = fixtures.find(
             (item) => item.caseName === result.caseName && item.variant === result.variant,
         ).fixture
-        assert.equal(result.requestCount, fixture.llmRequests.length)
+        assert.equal(result.requestCount, fixture.inspectors.llmRequests.length)
         assert.deepEqual(
             result.visibleToolCountByStep,
-            fixture.llmRequests.map((request) => request.tools.length),
+            fixture.inspectors.llmRequests.map((request) => request.tools.length),
         )
         assert.equal(
             result.visibleToolCount,

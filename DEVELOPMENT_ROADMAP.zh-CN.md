@@ -984,48 +984,17 @@ hard threshold -> stopReason = no_progress
 
 ---
 
-# 16. Phase 10：Agent Evaluation【个人重点】
+# 16. Phase 10：Harness Evaluation【个人重点】
 
-建立统一 Eval Case：
+### Phase 10.1 — Harness Evaluation Framework V1 ✅
 
-```yaml
-name: locate-config
-prompt: Find where database connection is configured.
-limits:
-  steps: 20
-  inputTokens: 20000
-expected:
-  files:
-    - src/config/database.ts
-```
+已将确定性 `tool-routing` 与 `progress` Eval 统一到 JavaScript EvalCase、EvalSuite、fixture、scorer、runner 和 reporter / CLI contract。版本化报告保留 provider usage 与 Harness estimate 的区别，并通过 suite assertions 检查 baseline 对照和策略验收条件。
 
-Eval Runner 统一收集：
+当前 suites 用本地 Mock 评估 Harness policy / runtime behavior，不代表真实模型或 Coding Benchmark 的效果。
 
-```text
-success
-steps
-tool_calls
-input_tokens
-output_tokens
-tool_schema_tokens
-latency
-cost
-repeated_calls
-stop_reason
-```
+### Phase 10.2 — Context Pressure / Compaction Eval（待办）
 
-至少建立：
-
-```text
-filesystem/
-long-horizon/
-tool-routing/
-context-pressure/
-tool-failure/
-mcp-failure/
-```
-
-所有“优化”结论必须来自 Baseline 对照。
+后续为 Context Pressure / Compaction 建立确定性 Harness Eval，并通过 baseline 比较可量化的上下文与任务结果。Filesystem、long-horizon、Tool / MCP failure、真实模型 benchmark 等评测仍属后续研究，不属于 Phase 10.1。
 
 ---
 
@@ -1111,7 +1080,9 @@ Phase 8  Progressive Tool Disclosure
    ↓
 Phase 9.1  Deterministic Progress Guard V1 ✅
    ↓
-Phase 10 Agent Evaluation
+Phase 10.1 Harness Evaluation Framework V1 ✅
+   ↓
+Phase 10.2 Context Pressure / Compaction Eval（待办）
    ↓
 Phase 11 Fault Injection
 ```
@@ -1181,7 +1152,7 @@ Git 历史应成为“从最小 Harness 一层层做出工程能力”的直接�
 
 3. **上下文与 Tool / MCP 治理：** 通过 Token-aware Compaction 将完整 Event Log 与模型可见 Context 解耦，压缩较早历史并保留近期原始对话；重构 Tool Runtime，加入 Schema Validation、Timeout / Cancellation 与 bounded parallel tool scheduling，并在 MCP 生命周期管理之上设计 Progressive Tool Disclosure，按任务选择并动态暴露相关 Tool Schema，解决长会话上下文膨胀及大规模工具带来的 Schema 开销问题。
 
-4. **可观测与评测：** 构建 `Session → Run → Step → Tool Call` 级 Trace，记录 Token、Tool Call、Latency、Cost 与 Stop Reason；实现 Agent Evaluation 与 Fault Injection，对 Context Compaction、Tool Routing、长任务控制和故障恢复进行 Baseline 对照，解决 Harness 优化效果缺少统一量化依据的问题。
+4. **可观测与评测：** 构建 `Session → Run → Step → Tool Call` 级 Trace，记录 Token、Tool Call、Latency、Cost 与 Stop Reason；当前以确定性 Harness Eval 对 Tool Routing 和 Progress policy 做 Baseline 对照。Context Compaction 与故障恢复等评测仍待后续阶段，不宣称已有真实模型 benchmark。
 
 ### 简历措辞约束
 

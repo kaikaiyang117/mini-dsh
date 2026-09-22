@@ -136,7 +136,15 @@ MINI_DSH_PROGRESS_HARD_STEPS=6
 
 ## Evaluation
 
-运行 `pnpm eval:tool-routing` 可用确定性 Mock 比较 Harness 的 Tool Visibility 策略；运行 `pnpm eval:progress` 可比较 baseline、remind 与 guarded 的进展检测行为。这些是 Harness 评测，不代表生产模型质量。真实模型评测、文件系统与长任务，以及 Fault Injection 留待后续阶段。
+### Harness Evaluation
+
+当前确定性 `tool-routing` 和 `progress` suites 共用 JavaScript EvalCase / EvalSuite contract、runner 和带版本号的 JSON 报告。EvalCase 包含 `name`、`prompt`、`expected`，以及可选的 `limits`、`metadata`、`scorer`；Suite 定义有序字符串 variant 和 fixture factory。Fixture 至少提供 `agent`、`trace`、`recordingTokenMeter`，还可提供 `dispose`、`inspectors`、`metadata`。Scorer 接收具名对象参数，并返回成功状态和可选的、有界 JSON details。
+
+Report 带有 `schemaVersion: 1`、Suite metadata、有序 variant 汇总和稳定的单 case 结果。结果保留 stop reason、duration、steps、Tool calls、request 与可见 Tool 数、schema 与估算输入指标、provider usage / cost availability，以及 target-tool 结果。Provider usage（`inputTokens`、`outputTokens`、`reasoningTokens`、`cost`）与 Harness 估算（`estimatedInputTokens`、`toolSchemaTokens`）保持分离。
+
+每个结果固定保留这些字段：`suiteName`、`caseName`、`variant`、`success`、`error`、`stopReason`、`durationMs`、`steps`、`toolCalls`、`requestCount`、`inputTokens`、`outputTokens`、`reasoningTokens`、`cost`、`visibleToolCount`、`visibleToolCountByStep`、`maxVisibleToolCount`、`toolSchemaTokens`、`toolSchemaTokensByStep`、`estimatedInputTokens`、`estimatedInputTokensByStep`、`targetToolCalled`、`targetToolSucceeded` 和有界 `scoreDetails`。
+
+运行 `pnpm eval:tool-routing` 与 `pnpm eval:progress`，JSON 报告分别写入 `.eval/tool-routing.json` 和 `.eval/progress.json`。这些本地 Mock Eval 用于测试 Harness policy 和 runtime behavior，不是生产模型排行榜或真实 Coding Benchmark。Context Pressure / Compaction Eval 计划在 Phase 10.2 开展。
 
 ## 给新手：从零手写
 

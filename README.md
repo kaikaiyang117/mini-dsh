@@ -136,7 +136,15 @@ MINI_DSH_PROGRESS_HARD_STEPS=6
 
 ## Evaluation
 
-Run `pnpm eval:tool-routing` for the deterministic mock evaluation of Harness Tool Visibility policies, or `pnpm eval:progress` to compare baseline, reminder, and guarded progress behavior. These are Harness evaluations, not production-model quality benchmarks. Real-model evaluation, filesystem and long-horizon tasks, and fault injection are future work.
+### Harness Evaluation
+
+The deterministic `tool-routing` and `progress` suites use a shared JavaScript EvalCase / EvalSuite contract, a common runner, and versioned JSON reports. An EvalCase carries `name`, `prompt`, `expected`, and optional `limits`, `metadata`, and `scorer`; a suite defines its ordered string variants and fixture factory. Fixtures provide `agent`, `trace`, and `recordingTokenMeter`, with optional `dispose`, `inspectors`, and `metadata`. Scorers receive a named context object and return success plus optional bounded JSON details.
+
+Reports have `schemaVersion: 1`, suite metadata, ordered variant summaries, and stable per-case results. Results retain stop reason, duration, steps, Tool calls, request and visible-tool counts, schema and estimated-input metrics, provider usage and cost availability, and target-tool outcome. Provider-reported usage (`inputTokens`, `outputTokens`, `reasoningTokens`, `cost`) remains separate from Harness estimates (`estimatedInputTokens`, `toolSchemaTokens`).
+
+Each result keeps this field set: `suiteName`, `caseName`, `variant`, `success`, `error`, `stopReason`, `durationMs`, `steps`, `toolCalls`, `requestCount`, `inputTokens`, `outputTokens`, `reasoningTokens`, `cost`, `visibleToolCount`, `visibleToolCountByStep`, `maxVisibleToolCount`, `toolSchemaTokens`, `toolSchemaTokensByStep`, `estimatedInputTokens`, `estimatedInputTokensByStep`, `targetToolCalled`, `targetToolSucceeded`, and bounded `scoreDetails`.
+
+Run the suites with `pnpm eval:tool-routing` and `pnpm eval:progress`; JSON reports are written to `.eval/tool-routing.json` and `.eval/progress.json`. These local-mock evaluations test Harness policy and runtime behavior; they are not real-model leaderboards or production coding benchmarks. Context pressure / compaction evaluation is planned for Phase 10.2.
 
 ## For beginners: write it from scratch
 

@@ -1,7 +1,8 @@
 import { performance } from 'node:perf_hooks'
 import { TraceRuntime } from '../core/trace-runtime.js'
 import { summarizeEvalResults } from './eval-metrics.js'
-import { evalCompletionScorer } from './eval-scorer.js'
+import { completionScorer } from './eval-scorer.js'
+import { isValidEvalCase } from './eval-suite.js'
 
 export const EVAL_VARIANTS = Object.freeze(['all', 'deterministic', 'progressive'])
 
@@ -47,7 +48,8 @@ export class EvalRunner {
         cases,
         variants = EVAL_VARIANTS,
         fixtureFactory,
-        scorer = evalCompletionScorer,
+        scorer = completionScorer,
+        suiteName = 'eval',
     } = {}) {
         if (!Array.isArray(cases) || cases.length === 0) {
             throw new TypeError('EvalRunner requires at least one EvalCase')
@@ -78,6 +80,7 @@ export class EvalRunner {
         this.variants = [...variants]
         this.fixtureFactory = fixtureFactory
         this.scorer = scorer
+        this.suiteName = suiteName
     }
 
     async run() {
@@ -88,6 +91,12 @@ export class EvalRunner {
             }
         }
         return {
+            schemaVersion: 1,
+            suite: {
+                name: this.suiteName,
+                variants: [...this.variants],
+                caseCount: this.cases.length,
+            },
             variants: summarizeEvalResults(results, this.variants),
             results,
         }
@@ -97,9 +106,19 @@ export class EvalRunner {
         const startedAt = performance.now()
         let fixture
         try {
-            fixture = await this.fixtureFactory(evalCase, variant)
+            fixture = await this.fixtureFactory({
+                evalCase,
+                variant,
+                limits: evalCase.limits ?? {},
+            })
         } catch (error) {
-            return failedResult(evalCase, variant, performance.now() - startedAt, error)
+            return failedResult(
+                this.suiteName,
+                evalCase,
+                variant,
+                performance.now() - startedAt,
+                error,
+            )
         }
 
         if (
@@ -108,8 +127,14 @@ export class EvalRunner {
             typeof fixture.trace?.latest !== 'function' ||
             !Array.isArray(fixture.recordingTokenMeter?.requests)
         ) {
-            throw new TypeError(
-                'Eval fixture must expose agent, trace.latest(), and token meter requests',
+            return failedResult(
+                this.suiteName,
+                evalCase,
+                variant,
+                performance.now() - startedAt,
+                new TypeError(
+                    'Eval fixture must expose agent, trace.latest(), and token meter requests',
+                ),
             )
         }
 
@@ -127,9 +152,30 @@ export class EvalRunner {
         }
 
         const trace = fixture.trace.latest()
-        if (!trace)
-            throw new Error(`Eval fixture did not capture a Trace for ${evalCase.name}/${variant}`)
-        const score = (evalCase.scorer ?? this.scorer)(trace, evalCase.expected, variant)
+        if (!trace) {
+            return failedResult(
+                this.suiteName,
+                evalCase,
+                variant,
+                performance.now() - startedAt,
+                error ??
+                    new Error(
+                        `Eval fixture did not capture a Trace for ${evalCase.name}/${variant}`,
+                    ),
+            )
+        }
+        let score = { success: false }
+        try {
+            score = (evalCase.scorer ?? this.scorer)({
+                trace,
+                expected: evalCase.expected,
+                variant,
+                evalCase,
+                fixture,
+            })
+        } catch (caught) {
+            error ??= normalizeError(caught)
+        }
         const requests = fixture.recordingTokenMeter.requests
         const visibleToolCountByStep = requests.map((request) => request.visibleToolCount)
         // Total tool exposure across model requests, not a count of distinct tools.
@@ -138,6 +184,7 @@ export class EvalRunner {
         const estimatedInputTokensByStep = requests.map((request) => request.estimatedInputTokens)
 
         return {
+            suiteName: this.suiteName,
             caseName: evalCase.name,
             variant,
             success: !error && score.success,
@@ -163,31 +210,17 @@ export class EvalRunner {
                 0,
             ),
             estimatedInputTokensByStep,
-            targetToolCalled: score.targetToolCalled,
-            targetToolSucceeded: score.targetToolSucceeded,
+            targetToolCalled: score.targetToolCalled ?? false,
+            targetToolSucceeded: score.targetToolSucceeded ?? false,
+            scoreDetails: boundedJsonValue(score.details),
             error,
         }
     }
 }
 
-function isValidEvalCase(item) {
-    if (!item?.name || typeof item.prompt !== 'string' || !item.expected) return false
-    if (item.expected.completion === undefined || item.expected.completion === 'target-tool') {
-        return Boolean(item.expected.targetTool)
-    }
-    if (item.expected.completion !== 'stop-reason') return false
-    const stopReasons =
-        typeof item.expected.stopReason === 'string'
-            ? [item.expected.stopReason]
-            : Object.values(item.expected.stopReason ?? {})
-    return (
-        stopReasons.length > 0 &&
-        stopReasons.every((reason) => typeof reason === 'string' && reason.length > 0)
-    )
-}
-
-function failedResult(evalCase, variant, durationMs, error) {
+function failedResult(suiteName, evalCase, variant, durationMs, error) {
     return {
+        suiteName,
         caseName: evalCase.name,
         variant,
         success: false,
@@ -209,7 +242,32 @@ function failedResult(evalCase, variant, durationMs, error) {
         estimatedInputTokensByStep: [],
         targetToolCalled: false,
         targetToolSucceeded: false,
+        scoreDetails: null,
         error: normalizeError(error),
+    }
+}
+
+function boundedJsonValue(value) {
+    if (value === undefined) return null
+    try {
+        const serialized = JSON.stringify(value)
+        if (serialized === undefined || serialized.length > 2000) return { truncated: true }
+        return JSON.parse(serialized)
+    } catch {
+        return { unavailable: true }
+    }
+}
+
+export function normalizeEvalReportForDeterminism(report) {
+    return {
+        ...report,
+        variants: Object.fromEntries(
+            Object.entries(report.variants ?? {}).map(([variant, summary]) => {
+                const { avgDurationMs, ...functionalSummary } = summary
+                return [variant, functionalSummary]
+            }),
+        ),
+        results: (report.results ?? []).map(({ durationMs, ...result }) => result),
     }
 }
 

@@ -9,7 +9,7 @@ import { ToolRuntime } from '../../src/core/tool-runtime.js'
 import { RecordingTokenMeter } from '../../src/eval/eval-metrics.js'
 import { CapturingTraceRuntime } from '../../src/eval/eval-runner.js'
 
-export async function createProgressFixture(evalCase, variant) {
+export async function createProgressFixture({ evalCase, variant, limits = {} }) {
     if (!['baseline', 'remind', 'guarded'].includes(variant)) {
         throw new TypeError(`unsupported progress variant: ${variant}`)
     }
@@ -110,7 +110,7 @@ export async function createProgressFixture(evalCase, variant) {
         llm,
         trace,
         contextManager,
-        policy: { maxSteps: 20 },
+        policy: { maxSteps: limits.maxSteps ?? 20 },
         progressDetectorFactory,
     })
     const agent = agents.create({
@@ -123,9 +123,7 @@ export async function createProgressFixture(evalCase, variant) {
         agent,
         trace,
         recordingTokenMeter,
-        llmRequests,
-        sessions,
-        session,
+        inspectors: { llmRequests, sessions, session, state },
         async dispose() {},
     }
 }

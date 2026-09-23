@@ -20,6 +20,7 @@
         "eval:fault-injection": "node scripts/eval-fault-injection.js",
         "eval:crash-recovery": "node scripts/eval-crash-recovery.js",
         "eval:mcp-failure": "node scripts/eval-mcp-failure.js",
+        "benchmark:coding": "node scripts/benchmark-coding.js",
         "lint:fix": "biome check --write .",
         "format": "biome format --write ."
     },

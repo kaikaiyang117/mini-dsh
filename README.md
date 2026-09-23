@@ -212,6 +212,8 @@ File writes and Bash execution request `[Y/n]` approval. See the [CLI screenshot
 
 ## Documentation
 
+The real-model Benchmark foundation (B0) includes one Coding Smoke Case. See [BENCHMARK.md](./BENCHMARK.md) for usage and measurement boundaries; the Smoke Case is not a formal Coding Benchmark result.
+
 | Document | Purpose |
 | --- | --- |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | Current layers, protocols, and recovery semantics |

@@ -1,232 +1,238 @@
 # mini-dsh
 
-[English](./README.md) | 中文
+[English](./README.md) | 中文（主要展示版本）
 
-基于 [`@deepseek-ai/cordis`](https://www.npmjs.com/package/@deepseek-ai/cordis)，按 DSH 概念手写的最小运行时。
+一个轻量、插件化、可恢复、可测评的 **Coding Agent Harness**，聚焦长任务可靠执行、渐进式工具发现、持久会话、上下文管理与可复现测评。
 
-这是一个**用于学习 DSH 核心设计**的最小项目，不追求做成完整 DSH 产品。
+受 DeepSeek Harness / DSH 的设计启发，基于 Cordis 组织插件；核心 Harness 逻辑在本仓库实现。它不是完整 DSH clone，也不是生产级替代品。
 
-目标只保留五件事：
+## 项目特点
 
-1. Cordis Context / Plugin / Service
-2. Session Event Log -> deriveMessages()
-3. Tool Registry -> register / schemas / execute
-4. LLM Provider Adapter
-5. Agent Loop -> model -> tool -> model -> answer
+- **Durable Session & Resume**：追加式 JSONL 历史、会话恢复与中断 Tool Call 补齐。
+- **Tool Runtime & Parallel Scheduling**：Schema 校验、统一错误结果、显式安全工具的有界并行。
+- **Context Management & Compaction**：从事实历史投影模型上下文，在协议安全边界压缩。
+- **Progressive Tool Discovery**：通过 `tool_search` 按需发现工具，并在当前 Run 内激活。
+- **Run Governance**：独立管理步数、调用数、时间、token、费用和失败预算。
+- **Managed MCP Lifecycle**：管理 MCP 插件的连接、断开、重载和清理。
+- **Semantic Progress Guard**：可选的确定性重复行为检测、提醒与停止。
+- **Evaluation & Fault Recovery**：测量执行路径、资源使用、协议一致性与崩溃恢复语义。
 
-另外保留了 Bash/File 工具和官方 `@deepseek-ai/dsh-mcp-client` + Context7，用来验证“Everything is a Plugin”。Context7 是可选的：连不上时 CLI 照样启动，只是没有那些 MCP 工具。
+## 架构
 
-## 演示
+```text
+User / CLI
+  ↓
+AgentRuntime
+  ↓
+AgentLoopRuntime
+  ├── RunController         是否继续
+  ├── ContextManager
+  │     ├── Context Projection
+  │     └── Compaction Planner
+  ├── Tool Visibility       All / Deterministic / Progressive
+  ├── ToolScheduler
+  │     └── ToolRuntime     Bash / Files / MCP Tools
+  └── LLM Runtime           Provider Adapter → Model
+  ↕
+SessionRuntime
+  └── SessionStore          Memory / JSONL
+```
 
-![mini-dsh CLI](./images/demo.png)
+**本仓库实现**：Agent Loop、Session、Run Controller、Tool Runtime / Scheduler、Context Projection / Compaction、Tool Visibility、Progress Guard、MCP 生命周期管理与 Eval 框架。**依赖提供**：`@deepseek-ai/cordis` 的 Context / Plugin / Service，`@deepseek-ai/dsh-mcp-client` 的 MCP 协议与远端交互，以及 Ajv 的 JSON Schema 校验引擎。
 
-## 环境
+## 为什么需要 Harness
 
-- Node.js `>= 20.18.1`
-- pnpm `11.22.0`（见 `package.json` 的 `packageManager`）
+Coding Agent 的困难不止是生成下一段代码。长任务需要持续状态；Tool Call 需要可靠执行，并发结果需要保持协议完整；上下文增长后需要压缩，进程崩溃后需要恢复。工具多时还要控制 Schema 开销、检测无进展的重复行为、管理 MCP 生命周期，并用可重复的实验验证这些设计。
 
-## 运行
+```text
+Coding Agent = Model（推理与生成）+ Harness（执行、状态与约束）
+```
+
+mini-dsh 将这些工程问题拆成可读、可替换、可测试的组件。第一次阅读可以先看下面的核心设计和 Eval 表，再沿链接深入源码。
+
+## 核心设计
+
+### Durable Sessions
+
+**Durable History ≠ Model Context。** Event Log 保存事实历史；模型消息只是它的投影：
+
+```text
+Durable Event Log → Context Projection → Compaction → Model Messages
+```
+
+`session/start`、`user/message`、`assistant/message`、`assistant/tool_calls`、`tool/result`、`context/compaction` 保存消息、调用、结果、工具调用轮的 reasoning 和压缩 lineage。Compaction 只追加记录、改变投影，不能改写或删除已有 Event Log。恢复依赖 Event Log，而不是已经压缩的 Prompt。
+
+核心不变式：**每个已提交到 `assistant/tool_calls` 的 Tool Call 最终必须恰好对应一个 `tool/result`**。正常执行、预算停止、取消和恢复都围绕这一协议闭合目标设计；崩溃中途可以暂时未闭合，重新打开会话后补齐未知结果。
+
+### Run Governance
+
+AgentLoop 管 **how to execute**，RunController 管 **whether to continue**。每个 Run 独立管理 step、tool call、duration、input/output token、cost、tool failure、context overflow 和 cancel。
+
+停止原因包括 `completed`、`cancelled`、`step_limit`、`tool_call_limit`、`time_limit`、`input_token_limit`、`output_token_limit`、`cost_limit`、`tool_failure_limit`、`context_overflow`、`no_progress`、`internal_error`。Token / cost 预算依赖可用的 usage / pricing，不能把未知费用视为零。
+
+Progress Guard 根据规范化调用、结果类别、指纹和新颖度检测重复。默认 `off`；`remind` 提供临时提醒，`guarded` 还可触发 `no_progress`。名称中的 Semantic 不代表 LLM 语义裁判或完整目标状态推理。
+
+### Context Management
+
+ContextManager 不是 Session Store；它负责 **Durable History → Model Context**，包括 token estimation、pressure state、protocol-safe boundary 和 deterministic compaction。
+
+输入 hard limit 是 context window 减去 reserved output tokens；soft limit 提前触发压缩。压缩后仍达 hard limit 则停止。压缩不能切断 Tool Call / Result 配对；当前压缩器生成有长度限制的确定性连续性摘要，不保证保留全部语义。
+
+### Tool Runtime
+
+Tool Definition 包含 JSON Schema（`parameters`）、`timeoutMs`、`readOnly`、`idempotent`、`concurrencySafe`、`sideEffect`。Runtime 负责参数校验、结果渲染，并尽量把错误规范化成 Tool Result：`unknown_tool`、`invalid_arguments`、`timeout`、`cancelled`、`execution_error`。
+
+只有 `concurrencySafe=true` 的工具可以并行，其余工具作为 barrier。**执行完成顺序与 Event Log 提交顺序不同**：结果按原始 Tool Call 顺序提交。Timeout / cancel 是协作式的，需要工具响应 AbortSignal 并完成清理；不是强制抢占。
+
+### Tool Discovery
+
+| 模式 | 模型看到什么 |
+| --- | --- |
+| All（默认） | 全量已注册 Tool Schema |
+| Deterministic | 按词法相关性选择 Top-K |
+| Progressive | `tool_search` + 基础选择 + 当前 Run 激活的工具 |
+
+Visibility 控制 Schema 暴露，**不是授权机制**。Progressive 只搜索已注册工具，不会惰性连接 MCP；搜索算法与回退规则见[架构文档](./ARCHITECTURE.zh-CN.md#9-tool-visibility)。
+
+### MCP
+
+```text
+McpManager → dsh-mcp-client → MCP Server
+                    ↓ 发现并同步工具
+             ctx.tools.register() → ToolRuntime
+```
+
+mini-dsh 管 MCP Plugin lifecycle；MCP protocol、transport、remote reconnect、remote tool discovery 由官方 `@deepseek-ai/dsh-mcp-client` 提供。`ACTIVE` 只表示客户端插件 Fiber 已激活，**不代表远端 endpoint 健康**。
+
+## Evaluation
+
+以下数据来自基线 `588e764` 的已有 suites，均为 **deterministic synthetic Eval**，使用 Mock LLM 验证 Harness；不是生产模型 Benchmark、SWE-bench 或真实模型能力排名。Token 是 Harness 估算，独立于 provider usage / 实际费用。复现命令和报告口径见[架构文档](./ARCHITECTURE.zh-CN.md#13-evaluation)。
+
+### Tool Routing
+
+来源：[tool-routing suite](./evals/tool-routing/suite.js)，每种模式运行同一组案例。
+
+| 模式 | 平均可见工具 / request | Schema tokens / request | 平均估算输入 / run |
+| --- | ---: | ---: | ---: |
+| All | 19 | 9,268 | 18,650.8 |
+| Deterministic | 5 | 336 | 786.8 |
+| Progressive | 1.93 | 199.6 | 1,016.2 |
+
+三个模式均通过全部案例。Progressive 降低单次请求的 Schema 开销，但多了一步 Tool Search，因此本组实验的整个 Run 估算输入高于 Deterministic。这是发现能力与额外请求之间的取舍。
+
+### Context Pressure
+
+来源：[context-pressure suite](./evals/context-pressure/suite.js)。Constrained / Compacted 使用 1,900 token 窗口，预留 200 output tokens；Full-history 不设窗口限制。
+
+| 模式 | 峰值估算输入 / request | 平均估算输入 / run | Compactions（整组总数） | 任务结果 |
+| --- | ---: | ---: | ---: | --- |
+| full-history | 5,697 | 20,884 | 0 | 全部完成 |
+| constrained | 1,234 | 2,593 | 0 | 全部 `context_overflow` |
+| compacted | 1,578 | 9,040 | 17 | 全部完成 |
+
+Compacted 相比 Full-history，峰值降低约 **72%**，累计估算输入降低约 **57%**，任务仍完成。峰值只统计实际发出的模型请求；Constrained 被拒绝的超限请求不计入峰值，不能把提前停止当作优化成功。
+
+### Long-Horizon Coding
+
+来源：[long-horizon suite](./evals/long-horizon/suite.js)。Mock LLM 驱动一次性本地仓库中的真实文件操作和测试：
+
+```text
+search → read → test（失败）→ edit → retest（通过）→ finish
+```
+
+Scorer 不只看最终文件，还检查初始测试失败、最终测试通过、required reads、workspace diff、unexpected files 和 Tool protocol。
+
+| 模式 | 平均可见工具 / request | 估算输入（整组总量，约） | 完成 |
+| --- | ---: | ---: | ---: |
+| baseline | 25 | 195,000 | 5/5 |
+| managed | 9 | 99,000 | 5/5 |
+
+工具暴露降低 **64%**，估算输入降低约 **49%**。这里使用本地报告的近似值；测试输出和临时路径等环境文本会影响 token 估算。Managed 同时启用 **Tool Routing、Progress Guard、Context Compaction**，不能把全部收益归因于其中某一个机制。
+
+### Reliability
+
+| Suite | 故障覆盖 | 验证重点 |
+| --- | --- | --- |
+| [Fault Injection](./evals/fault-injection/suite.js) | LLM failure、Tool error / timeout、invalid call、unknown tool、parallel cancellation、context overflow、scheduler failure | 停止原因、故障确实触发、调用与结果配对 |
+| [Crash Recovery](./evals/crash-recovery/suite.js) | 真实进程 SIGKILL、JSONL reopen、torn tail、unknown outcome | 恢复后协议闭合、副作用证据、no blind retry |
+| [MCP Failure](./evals/mcp-failure/suite.js) | activation cleanup、server isolation、disconnect/reload、stale schema、cleanup retry、remote-like Tool failure | 插件生命周期、注册工具清理、失败隔离 |
+
+如果副作用已发生，Tool Result 尚未持久化时进程崩溃，Harness 无法确定执行结果：恢复记录 `outcome=unknown`、`retryable=false`。
+
+**mini-dsh 明确选择“副作用结果不确定时，不盲目重试”，不声称实现分布式 exactly-once。** MCP Failure 使用本地 fake plugin，不代表远端 MCP chaos testing 或健康检测。
+
+## 快速开始
+
+环境要求见 [package.json](./package.json)：Node.js `>=20.18.1`，pnpm `11.22.0`。
 
 ```bash
 pnpm install
 cp .env.example .env
-# 填写 DEEPSEEK_API_KEY
+# 在 .env 填写 DEEPSEEK_API_KEY
 pnpm start
 ```
 
-`.env.example` 里写的是 `deepseek/deepseek-v4-flash`；如果完全没有 `MINI_DSH_MODEL`（例如没复制 `.env`），入口回退到 `deepseek/deepseek-v4-pro`（`src/index.js:41`）。
+[.env.example](./.env.example) 默认模型为 `deepseek/deepseek-v4-flash`；未设置 `MINI_DSH_MODEL` 时，入口回退到 `deepseek/deepseek-v4-pro`。CLI 默认将会话写入 `.data/sessions`，可通过 `MINI_DSH_SESSION_DIR` 更改。
 
-可选：填写 `CONTEXT7_API_KEY`。远端首次连接失败不会导致客户端 Fiber 启动失败；CLI 仍会启动，后续重连由官方客户端管理。`ACTIVE` 只表示 Fiber 已激活，不代表远端健康。
+Context7 是可选集成，配置见 [mcp.config.js](./mcp.config.js)。可填写 `CONTEXT7_API_KEY`；远端首次连接失败不会阻止 CLI 启动，后续远端重连由官方客户端管理。
 
-Context7 连上之后的路径：
-
-```text
-@deepseek-ai/dsh-mcp-client
-  -> https://mcp.context7.com/mcp
-  -> ctx.tools.register(...)
-  -> mcp__context7__resolve-library-id
-  -> mcp__context7__query-docs
-```
-
-Managed MCP 生命周期：
-
-```text
-McpManager
-  -> @deepseek-ai/dsh-mcp-client
-  -> 远程 MCP Server
-```
-
-Mini-DSH 只管理 MCP Plugin Instance 生命周期，并提供 `DISCONNECTED`、`CONNECTING`、`ACTIVE`、`FAILED` 四种状态。MCP 协议传输、发现、Tool 同步和重连继续由官方 `dsh-mcp-client` 负责。`ACTIVE` 只表示客户端 Plugin Fiber 已成功激活，不代表远端 transport 当前一定健康。
-
-## CLI
-
-```text
-/tools
-/mcp list
-/mcp connect <name>
-/mcp disconnect <name>
-/mcp reload <name>
-/models
-/model
-/model deepseek/deepseek-v4-pro
-/model deepseek/deepseek-v4-flash
-/history
-/prompt
-/reset
-/exit
-```
-
-写文件和 Bash 执行前会问 `[Y/n]`。Agent 跑起来后按 **Esc** 取消当前轮（方向键不会误取消）。
-
-## Agent Loop 的治理与 Context
-
-核心执行形状仍然是 model -> tool -> model，但现在每个 Agent Run 都由独立的 `RunController` 和 `ContextManager` 管理：
-
-```js
-while (true) {
-  const stepDecision = controller.beforeStep(signal)
-  if (stepDecision.action === 'stop') return stepDecision
-
-  const context = await contextManager.prepare(sessionId, request)
-  const response = await model(context)
-
-  if (!response.toolCalls?.length) {
-    return response.content
-  }
-
-  await executeTools(response.toolCalls)
-}
-```
-
-当前 Runtime 已包含：
-
-- 每个 Run 独立的 step、Tool Call、duration、input/output token、estimated cost 和 Tool failure 限制；单项限制使用 `null` 关闭；
-- Run deadline，以及 LLM / Tool 的 cooperative cancellation；
-- 基于 Event Log 的 Context Projection、Token Pressure 和确定性持久 Compaction；
-- append-only JSONL Session persistence、resume、replay 和 interrupted-tool recovery；
-- 只对显式标记 `concurrencySafe` 的 Tool 做有界并行；
-- 同一 Session 内 Agent Run FIFO 串行，不同 Session 可以并发。
-- 可选的 Run-scoped 确定性 no-progress 检测、临时策略提醒和显式启用的 hard stop。
-
-`ToolCatalog` 为当前已注册 Tool 提供 metadata snapshot。每个 Step 的可见策略由 `AllToolsVisibility`、`DeterministicToolVisibility` 或 `ProgressiveToolVisibility` 选择：
-
-```text
-Registered Tools -> Tool Catalog -> Per-Step Visibility -> Model Request
-```
-
-配置示例（均为默认值）：
+可选策略配置（下列为默认值；其余预算配置见 `.env.example`）：
 
 ```dotenv
 MINI_DSH_TOOL_ROUTING=all
 MINI_DSH_MAX_VISIBLE_TOOLS=12
 MINI_DSH_MAX_ACTIVATED_TOOLS=24
-```
-
-`MINI_DSH_TOOL_ROUTING=all` 暴露全部已注册 Tool。`MINI_DSH_TOOL_ROUTING=deterministic` 使用词法 Top-K 路由；大 Catalog 无匹配时回退到全部 Tool，以保持兼容。`MINI_DSH_TOOL_ROUTING=progressive` 固定暴露 `tool_search`，基础路由在无匹配时只返回 pinned Tools；不超过 Top-K 的小 Catalog 仍全量可见。搜索使用相同词法排序检索当前完整 Tool Catalog，只返回精简名称/描述，并将命中 Tool 激活到当前 Run 的后续 Step。这让模型可以在不同 Step 间调整搜索 query。达到激活上限时结果会列出未激活的命中；每个 Step 都读取新 Catalog snapshot，Run 结束会清除激活状态。匹配仅基于 ASCII 词元，不具备跨语言语义、同义词或语义相似度理解。`/tools` 继续展示已注册 Tool；Visibility 不是授权机制，被隐藏的 Tool 仍可通过 Tool Runtime 执行。Progressive Search 不会惰性连接 MCP Server，只发现已经注册的 Tool。
-
-Semantic Progress Detection V1 是可选的确定性启发式规则，结合规范化 Tool Call、结果类别、结果指纹和结果新颖度，检测重复且没有新信息的执行。默认 `off`；`remind` 注入固定的临时策略提醒；`guarded` 还会以 `no_progress` 停止 Run。它不是 LLM 语义裁判、embedding 相似度、完整目标状态推理或 workspace 语义 diff。Workspace 变化和目标进展仍是未来可探索的信号。Sandbox 仍然是应用层路径/命令 Policy 加人工确认，不是内核级隔离。
-
-```dotenv
+MINI_DSH_MAX_PARALLEL_TOOL_CALLS=4
 MINI_DSH_PROGRESS_MODE=off
-MINI_DSH_PROGRESS_SOFT_STEPS=3
-MINI_DSH_PROGRESS_HARD_STEPS=6
+MINI_DSH_MAX_CONTEXT_TOKENS=null
 ```
 
-`MINI_DSH_PROGRESS_SOFT_STEPS` 在 `remind` 和 `guarded` 模式生效。`MINI_DSH_PROGRESS_HARD_STEPS` 只在 `guarded` 模式参与运行时决策；`off` 不创建 Detector。所有模式都会校验显式设置的阈值。
+## CLI
 
-## Evaluation
+| 命令 / 操作 | 用途 |
+| --- | --- |
+| `/tools` | 查看已注册工具 |
+| `/sessions`、`/resume <session-id>`、`/new` | 列出、恢复或创建会话 |
+| `/history`、`/reset` | 查看事件历史；追加 reset 事件，重置上下文视图 |
+| `/models`、`/model [provider/model]` | 查看或切换模型 |
+| `/prompt` | 查看系统提示词 |
+| `/mcp list`、`/mcp connect <name>`、`/mcp disconnect <name>`、`/mcp reload <name>` | MCP 生命周期管理 |
+| `Esc`、`/exit` | 取消当前 Run；退出 CLI |
 
-### Harness Evaluation
+写文件和 Bash 执行前会请求 `[Y/n]` 确认。演示见 [CLI 截图](./images/demo.png)。
 
-当前确定性 `tool-routing` 和 `progress` suites 共用 JavaScript EvalCase / EvalSuite contract、runner 和带版本号的 JSON 报告。EvalCase 包含 `name`、`prompt`、`expected`，以及可选的 `limits`、`metadata`、`scorer`；Suite 定义有序字符串 variant 和 fixture factory。Fixture 至少提供 `agent`、`trace`、`recordingTokenMeter`，还可提供 `dispose`、`inspectors`、`metadata`。Scorer 接收具名对象参数，并返回成功状态和可选的、有界 JSON details。
+## 当前边界
 
-Report 带有 `schemaVersion: 1`、Suite metadata、有序 variant 汇总和稳定的单 case 结果。结果保留 stop reason、duration、steps、Tool calls、request 与可见 Tool 数、schema 与估算输入指标、provider usage / cost availability，以及 target-tool 结果。Provider usage（`inputTokens`、`outputTokens`、`reasoningTokens`、`cost`）与 Harness 估算（`estimatedInputTokens`、`toolSchemaTokens`）保持分离。
+- 聚焦本地 Harness 的工程设计，不是完整 DSH 产品或生产级替代品。
+- JSONL 面向本地会话恢复，没有跨进程写入协调或分布式 exactly-once 保证。
+- Sandbox 是应用层路径 / 命令策略和人工确认，不是 OS 隔离；也不为远端 MCP 工具提供隔离。
+- Visibility 不是权限；词法路由没有跨语言语义理解。Compaction 有信息损失，Progress Guard 是启发式规则。
+- 协作式取消不保证强制终止不配合的工具；`ACTIVE` 不代表远端 MCP 健康。
+- Synthetic Eval 证明的是指定条件下的 Harness 行为，不推导真实模型任务成功率。
 
-每个结果固定保留这些字段：`suiteName`、`caseName`、`variant`、`success`、`error`、`stopReason`、`durationMs`、`steps`、`toolCalls`、`requestCount`、`inputTokens`、`outputTokens`、`reasoningTokens`、`cost`、`visibleToolCount`、`visibleToolCountByStep`、`maxVisibleToolCount`、`toolSchemaTokens`、`toolSchemaTokensByStep`、`estimatedInputTokens`、`estimatedInputTokensByStep`、`targetToolCalled`、`targetToolSucceeded` 和有界 `scoreDetails`。
+## 文档导航
 
-运行 `pnpm eval:tool-routing`、`pnpm eval:progress`、`pnpm eval:context-pressure`、`pnpm eval:long-horizon`、`pnpm eval:fault-injection`、`pnpm eval:crash-recovery` 和 `pnpm eval:mcp-failure`，报告写入对应的 `.eval/*.json`。Long-Horizon 是在一次性本地仓库中运行的 deterministic synthetic coding workflow，使用 Mock LLM 比较 baseline 与 managed Harness；它不是 SWE-bench、HumanEval 或真实模型 Coding Benchmark。Context Pressure suite 在 1,900 token context window（预留 200 output tokens）下比较 full history、有限窗口但不 compaction、以及 deterministic compaction。Crash / Resume Recovery 使用真实 child process、durable JSONL reopen、torn final-line 修复和保守的未闭合 Tool recovery。MCP Failure 使用本地 fake plugin 验证 Harness 的 activation cleanup、server isolation、disconnect/reload 生命周期、stale Tool snapshot、cleanup retry 和 remote-like Tool failure；它不是远端 MCP chaos testing，也不是 transport health check。非幂等副作用可能已经发生但 Result 尚未 durable 时，runtime 记录 `unknown`、`retryable=false`，不执行 blind retry；这不是 distributed exactly-once。Fault Injection 和这些离线 Eval 用于测试 Harness policy 和 runtime behavior，不是生产模型排行榜。
+| 文档 | 内容 |
+| --- | --- |
+| [ARCHITECTURE.zh-CN.md](./ARCHITECTURE.zh-CN.md) | 当前系统分层、协议与恢复语义 |
+| [DESIGN_DECISIONS.zh-CN.md](./docs/DESIGN_DECISIONS.zh-CN.md) | 关键选择的原因和取舍 |
+| [LEARNING.md](./LEARNING.md) | 从零手写的学习路线 |
+| [SOURCE_STUDY_ROADMAP.zh-CN.md](./SOURCE_STUDY_ROADMAP.zh-CN.md) | 按开发历史阅读源码与自测 |
+| [DEVELOPMENT_ROADMAP.zh-CN.md](./DEVELOPMENT_ROADMAP.zh-CN.md) | 阶段演进规划与历史背景；当前能力以架构文档和源码为准 |
 
-生产 `SandboxRuntime` 目前是应用层 policy gate，不是操作系统级隔离。
-
-## 给新手：从零手写
-
-不要直接读完整仓库。先扫一遍 **[ARCHITECTURE.md](./ARCHITECTURE.md)** 建立整体概念图，再新建空项目，按 **[LEARNING.md](./LEARNING.md)** 的里程碑自己写一遍。
-
-如果想按照原作者的真实开发历史理解“为什么先做这一层、下一层如何演进”，可以直接看 **[SOURCE_STUDY_ROADMAP.zh-CN.md](./SOURCE_STUDY_ROADMAP.zh-CN.md)**。这份路线按 27 个主线 commit 组织源码阅读、实验和面试自测。
-
-如果已经理解当前最小 Harness，并准备继续把它扩展成自己的 Agent Runtime，请按 **[DEVELOPMENT_ROADMAP.zh-CN.md](./DEVELOPMENT_ROADMAP.zh-CN.md)** 推进。该路线以当前代码为基线，对照成熟 DSH 的生产能力，分阶段实现 Session Persistence、Run Controller、Tool Runtime V2、Parallel Tool Calls、Context Compaction、MCP 生命周期，并进一步完成 Progressive Tool Disclosure、Semantic Progress Detection、Agent Evaluation 与 Fault Injection。
-
-## 推荐阅读顺序
-
-```text
-src/index.js
-  ↓
-src/plugins/sessions.js
-src/plugins/system-prompt.js
-src/plugins/tools.js
-src/plugins/llm.js
-src/plugins/agents.js
-src/plugins/agent-loop.js
-src/plugins/sandbox.js
-  ↓
-src/core/session-runtime.js
-  ↓
-src/core/system-prompt-runtime.js
-src/plugins/runtime-context.js
-  ↓
-src/core/tool-runtime.js
-  ↓
-src/core/llm-runtime.js
-  ↓
-src/core/agent-runtime.js
-  ↓
-src/core/agent-loop-runtime.js   ← 最核心
-  ↓
-src/plugins/cli.js
-  ↓
-src/utils/path.js
-src/core/sandbox-runtime.js
-  ↓
-src/models/deepseek.js
-  ↓
-src/tools/bash.js
-src/tools/files.js
-  ↓
-src/plugins/external-plugins.js
-plugins.config.js
-  ↓
-test/core.test.js   ← 行为文档：每个 runtime 都有对应示例
-```
-
-## 最重要的心智模型
-
-```text
-                                    Cordis Context
-                                           │
-    ┌────────────┬────────────┬────────────┬────────────┬────────────┬────────────┐
-    ▼            ▼            ▼            ▼            ▼            ▼
-    sessions     systemPrompt tools        llm          agents       agentLoop
-                              │            │                         Agent
-                              bash / files DeepSeek
-                              │
-                              ctx.sandbox
-                              path / command / Y/n
-                              └── dsh-mcp-client (optional)
-                                           │
-                                        Context7
-```
-
-Agent Loop 不知道 Context7，也不知道 Bash 是什么；它只知道 `ctx.tools`。Agent 只是一个薄封装：sessionId + model + loop（`src/core/agent-runtime.js`）。
-
-这就是这个项目最值得学习的部分。
-
-## 测试
+## 开发与验证
 
 ```bash
 pnpm test
 pnpm check
+pnpm lint
+pnpm eval:tool-routing
+pnpm eval:progress
+pnpm eval:context-pressure
+pnpm eval:long-horizon
+pnpm eval:fault-injection
+pnpm eval:crash-recovery
+pnpm eval:mcp-failure
 ```
 
-测试里包含一个 Agent 连续执行 20 次工具调用后才结束的案例，用来证明 Agent Loop 已经不再有原来的 12-step 正常上限。
-
-学AI上[LINUX DO](https://linux.do)
+Eval 报告写入 `.eval/*.json`；上述检查均已纳入 [CI](./.github/workflows/ci.yml)。

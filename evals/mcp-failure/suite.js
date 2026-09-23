@@ -71,6 +71,7 @@ export function scoreMcpFailure({ evalCase, fixture, trace }) {
         disposalAttempts: state.disposalAttempts ?? 0,
         errorRedacted: state.errorRedacted ?? false,
         registeredToolNames,
+        registeredToolNamesAfterFirstDispose: state.registeredToolNamesAfterFirstDispose ?? [],
         toolLeakCount: registeredToolNames.filter((name) => !expectedToolNames.includes(name))
             .length,
         toolCallCount: calls.length,
@@ -80,11 +81,18 @@ export function scoreMcpFailure({ evalCase, fixture, trace }) {
         unmatchedToolCallIds,
         protocolComplete,
         healthyServerUsable: state.healthyServerUsable ?? false,
+        brokenToolAbsent: state.brokenToolAbsent ?? false,
         staleToolReturnedUnknown: state.staleToolReturnedUnknown ?? false,
         staleSchemaVisible: state.staleSchemaVisible ?? false,
+        toolErrorCode: state.toolErrorCode ?? null,
+        toolIsError: state.toolIsError ?? false,
+        toolFailure: state.toolFailure ?? null,
+        modelSawToolFailure: state.modelSawToolFailure ?? false,
         managerStateAfterToolFailure: state.serverStates?.unstable ?? null,
         cleanupRetried: state.cleanupRetried ?? false,
         reloadCreatedNewFiber: state.reloadCreatedNewFiber ?? false,
+        oldToolRetained: state.oldToolRetained ?? false,
+        toolRegistrationCount: state.toolRegistrationCount ?? 0,
         finalManagerDisposed: state.finalManagerDisposed ?? false,
         stopReason: trace?.stopReason ?? 'completed',
     }
@@ -110,54 +118,75 @@ function caseSuccess(name, details) {
             details.serverStates.broken === 'FAILED' &&
             details.serverStates.fake === 'ACTIVE' &&
             details.healthyServerUsable &&
-            details.registeredToolNames.includes('mcp__fake__echo')
+            details.registeredToolNames.includes('mcp__fake__echo') &&
+            details.brokenToolAbsent &&
+            details.toolLeakCount === 0
         )
     if (name === 'disconnect-removes-tools')
         return (
             details.serverStates.fake === 'DISCONNECTED' &&
             details.healthyServerUsable &&
             details.staleToolReturnedUnknown &&
-            !details.registeredToolNames.includes('mcp__fake__echo')
+            details.toolErrorCode === 'unknown_tool' &&
+            !details.registeredToolNames.includes('mcp__fake__echo') &&
+            details.toolLeakCount === 0
         )
     if (name === 'reload-restores-tools')
         return (
             details.serverStates.fake === 'ACTIVE' &&
             details.healthyServerUsable &&
-            details.registeredToolNames.filter((name) => name === 'mcp__fake__echo').length === 1
+            details.registeredToolNames.filter((name) => name === 'mcp__fake__echo').length === 1 &&
+            details.toolRegistrationCount === 1 &&
+            details.reloadCreatedNewFiber &&
+            details.toolLeakCount === 0
         )
     if (name === 'stale-schema-after-disconnect')
         return (
             details.staleSchemaVisible &&
             details.staleToolReturnedUnknown &&
+            details.toolErrorCode === 'unknown_tool' &&
+            details.modelSawToolFailure &&
             details.protocolComplete &&
-            details.stopReason === 'completed'
+            details.stopReason === 'completed' &&
+            details.toolLeakCount === 0
         )
     if (name === 'active-plugin-tool-execution-failure')
         return (
             details.managerStateAfterToolFailure === 'ACTIVE' &&
             details.toolFailures === 1 &&
+            details.toolErrorCode === 'execution_error' &&
+            details.toolIsError &&
+            String(details.toolFailure).includes('remote MCP unavailable') &&
+            details.modelSawToolFailure &&
             details.protocolComplete &&
-            details.stopReason === 'completed'
+            details.stopReason === 'completed' &&
+            details.toolLeakCount === 0
         )
     if (name === 'cleanup-failure-retry')
         return (
             details.serverStates.first === 'FAILED' &&
             details.serverStates.second === 'DISCONNECTED' &&
             details.cleanupRetried &&
-            details.registeredToolNames.length === 0
+            details.registeredToolNames.length === 0 &&
+            details.toolLeakCount === 0
         )
     if (name === 'reload-cleanup-failure')
         return (
             details.serverStates.first === 'FAILED' &&
             details.activationAttempts === 1 &&
-            details.reloadCreatedNewFiber === false
+            details.reloadCreatedNewFiber === false &&
+            details.oldToolRetained &&
+            details.toolRegistrationCount === 1
         )
     if (name === 'manager-dispose-partial-failure')
         return (
             details.serverStates.afterFirstDispose?.['server-a'] === 'DISCONNECTED' &&
             details.serverStates.afterFirstDispose?.['server-b'] === 'FAILED' &&
+            details.registeredToolNamesAfterFirstDispose?.length === 1 &&
+            details.cleanupRetried &&
             details.finalManagerDisposed &&
-            details.registeredToolNames.length === 0
+            details.registeredToolNames.length === 0 &&
+            details.toolLeakCount === 0
         )
     return false
 }

@@ -26,6 +26,12 @@ async function crash(name, directory, effects) {
     const session = await sessions.create()
     if (name === 'crash-after-user-message') {
         await sessions.append(session.id, 'user/message', { content: 'durable user message' })
+    } else if (
+        name === 'crash-after-side-effect-start' ||
+        name === 'crash-after-tool-result-commit'
+    ) {
+        await crashThroughAgent(name, sessions, session, effects)
+        return
     } else {
         await sessions.append(session.id, 'assistant/tool_calls', {
             runId: 'crash-run',
@@ -48,11 +54,36 @@ async function crash(name, directory, effects) {
             })
         } else if (name === 'torn-tool-result-tail') {
             await sessions.flush(session.id)
+            const prefix = await readFile(path.join(directory, session.id, 'session.jsonl'))
             await appendFile(
                 path.join(directory, session.id, 'session.jsonl'),
                 '{"seq":3,"type":"tool/result","data":{"toolCallId":"call-1"',
                 'utf8',
             )
+            const damaged = await readFile(
+                path.join(directory, session.id, 'session.jsonl'),
+                'utf8',
+            )
+            const lastLine = damaged.trimEnd().split('\n').at(-1)
+            process.send?.({
+                type: 'checkpoint',
+                phase: name,
+                sessionId: session.id,
+                eventCount: sessions.get(session.id).events.length,
+                tornTailWritten: true,
+                rawLengthBeforeCrash: Buffer.byteLength(damaged),
+                validPrefixLength: prefix.length,
+                tornTailValidBeforeCrash: (() => {
+                    try {
+                        JSON.parse(lastLine)
+                        return false
+                    } catch {
+                        return true
+                    }
+                })(),
+            })
+            await new Promise(() => {})
+            return
         }
     }
     await sessions.flush(session.id)
@@ -63,6 +94,88 @@ async function crash(name, directory, effects) {
         eventCount: sessions.get(session.id).events.length,
     })
     await new Promise(() => {})
+}
+
+async function crashThroughAgent(name, sessions, session, effects) {
+    const llm = new LlmRuntime()
+    const tools = new ToolRuntime()
+    const agents = new AgentRuntime()
+    let requestCount = 0
+    let executionCount = 0
+    tools.register({
+        name: 'side_effect_tool',
+        sideEffect: true,
+        idempotent: false,
+        concurrencySafe: false,
+        async execute() {
+            executionCount += 1
+            await sessions.flush(session.id)
+            await mkdir(effects, { recursive: true })
+            await writeFile(path.join(effects, 'effect-1.txt'), 'APPLIED\n', 'utf8')
+            if (name === 'crash-after-side-effect-start') {
+                process.send?.({
+                    type: 'checkpoint',
+                    phase: 'side-effect-applied',
+                    sessionId: session.id,
+                    eventCount: sessions.get(session.id).events.length,
+                    toolCallDurable: sessions
+                        .get(session.id)
+                        .events.some(
+                            (event) =>
+                                event.type === 'assistant/tool_calls' &&
+                                event.data.toolCalls?.some((call) => call.id === 'call-1'),
+                        ),
+                    executionCount,
+                })
+                await new Promise(() => {})
+            }
+            return 'APPLIED'
+        },
+    })
+    llm.register(
+        'crash-recovery',
+        {
+            models: ['deterministic'],
+            async chat() {
+                requestCount += 1
+                if (requestCount === 1) {
+                    return {
+                        toolCalls: [{ id: 'call-1', name: 'side_effect_tool', arguments: {} }],
+                    }
+                }
+                await sessions.flush(session.id)
+                process.send?.({
+                    type: 'checkpoint',
+                    phase: 'tool-result-durable',
+                    sessionId: session.id,
+                    eventCount: sessions.get(session.id).events.length,
+                    toolCallDurable: sessions
+                        .get(session.id)
+                        .events.some(
+                            (event) =>
+                                event.type === 'assistant/tool_calls' &&
+                                event.data.toolCalls?.some((call) => call.id === 'call-1'),
+                        ),
+                    executionCount,
+                })
+                await new Promise(() => {})
+            },
+        },
+        { defaultModel: 'deterministic' },
+    )
+    const loop = new AgentLoopRuntime({
+        sessions,
+        systemPrompt: new SystemPromptRuntime(),
+        tools,
+        llm,
+        policy: { maxSteps: 4 },
+    })
+    const agent = agents.create({
+        sessionId: session.id,
+        model: 'crash-recovery/deterministic',
+        loop,
+    })
+    await agent.send('perform the side effect')
 }
 
 async function resume(name, directory, id) {

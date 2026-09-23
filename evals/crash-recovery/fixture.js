@@ -27,7 +27,10 @@ export async function createCrashRecoveryFixture({ evalCase }) {
                     phase: 'resume',
                     sessionId,
                 })
-                if (evalCase.name === 'crash-after-side-effect-start') {
+                if (
+                    evalCase.name === 'crash-after-side-effect-start' ||
+                    evalCase.name === 'crash-after-tool-result-commit'
+                ) {
                     reopenResult = await runCrashWorker({
                         directory: sessionsDirectory,
                         effectsDirectory,
@@ -93,16 +96,42 @@ export function scoreCrashRecovery({ evalCase, fixture }) {
         results.every((event) => calls.some((call) => call.id === event.data.toolCallId))
     const resumed = Boolean(data.resume?.trace && data.resume?.requests?.length)
     const sideEffectExecutionCountAfterResume = data.resume?.executionCount ?? 0
+    const requestMessages = data.resume?.requests?.flat() ?? []
+    const userMessageVisible = requestMessages.some(
+        (message) => message.role === 'user' && message.content === 'durable user message',
+    )
+    const recoveredUnknown = unknown[0]?.data
+    const successfulResults = results.filter(
+        (event) => event.data.toolCallId === 'call-1' && event.data.isError === false,
+    )
     const details = {
         crashPhase: evalCase.name,
         persistedEventCountBeforeCrash: data.crash?.eventCount ?? null,
         recoveredEventCount: events.length,
         recoveredUnknownCount: unknown.length,
+        recoveredUnknown: recoveredUnknown
+            ? {
+                  recovered: recoveredUnknown.recovered,
+                  retryable: recoveredUnknown.retryable,
+              }
+            : null,
         duplicateToolResultIds,
         unmatchedToolCallIds,
         externalEffectCount: data.resume?.externalEffectCount ?? 0,
         sideEffectExecutionCountAfterResume,
-        tornTailRecovered: evalCase.name === 'torn-tool-result-tail',
+        sideEffectExecutionCountBeforeCrash: data.crash?.executionCount ?? 0,
+        toolCallDurableBeforeSideEffect: data.crash?.toolCallDurable ?? false,
+        tornTailWritten: data.crash?.tornTailWritten ?? false,
+        rawLengthBeforeCrash: data.crash?.rawLengthBeforeCrash ?? null,
+        validPrefixLength: data.crash?.validPrefixLength ?? null,
+        tornTailValidBeforeCrash: data.crash?.tornTailValidBeforeCrash ?? false,
+        tornTailRecovered:
+            evalCase.name === 'torn-tool-result-tail' &&
+            data.crash?.tornTailWritten === true &&
+            data.crash?.tornTailValidBeforeCrash === true &&
+            data.resume?.rawLinesValid === true &&
+            sequenceContinuous &&
+            unknown.length === 1,
         sequenceContinuous,
         protocolComplete,
         resumed,
@@ -110,8 +139,18 @@ export function scoreCrashRecovery({ evalCase, fixture }) {
         recovered: resumed,
         noBlindRetry: sideEffectExecutionCountAfterResume === 0,
         rawLinesValid: data.resume?.rawLinesValid === true,
+        userMessageVisible,
+        successfulResultCount: successfulResults.length,
+        resultFidelity:
+            successfulResults.length === 1 &&
+            successfulResults[0].data.isError === false &&
+            String(successfulResults[0].data.content).includes('APPLIED') &&
+            successfulResults[0].data.outcome !== 'unknown' &&
+            successfulResults[0].data.recovered !== true,
         doubleRestartIdempotent:
-            evalCase.name !== 'crash-after-side-effect-start' ||
+            !['crash-after-side-effect-start', 'crash-after-tool-result-commit'].includes(
+                evalCase.name,
+            ) ||
             (data.reopen?.events ?? []).filter((event) => event.type === 'tool/result').length ===
                 1,
     }
@@ -120,6 +159,32 @@ export function scoreCrashRecovery({ evalCase, fixture }) {
         'crash-after-side-effect-start',
         'torn-tool-result-tail',
     ].includes(evalCase.name)
+    const caseInvariant =
+        (evalCase.name === 'crash-after-user-message' &&
+            unknown.length === 0 &&
+            details.externalEffectCount === 0 &&
+            userMessageVisible) ||
+        (evalCase.name === 'crash-after-tool-call-commit' &&
+            unknown.length === 1 &&
+            recoveredUnknown?.recovered === true &&
+            recoveredUnknown?.retryable === false &&
+            details.externalEffectCount === 0) ||
+        (evalCase.name === 'crash-after-side-effect-start' &&
+            unknown.length === 1 &&
+            details.externalEffectCount === 1 &&
+            details.sideEffectExecutionCountBeforeCrash === 1 &&
+            sideEffectExecutionCountAfterResume === 0 &&
+            details.doubleRestartIdempotent) ||
+        (evalCase.name === 'crash-after-tool-result-commit' &&
+            unknown.length === 0 &&
+            details.externalEffectCount === 1 &&
+            details.sideEffectExecutionCountBeforeCrash === 1 &&
+            sideEffectExecutionCountAfterResume === 0 &&
+            details.successfulResultCount === 1 &&
+            details.resultFidelity) ||
+        (evalCase.name === 'torn-tool-result-tail' &&
+            details.tornTailRecovered &&
+            unknown.length === 1)
     const success =
         resumed &&
         protocolComplete &&
@@ -129,7 +194,8 @@ export function scoreCrashRecovery({ evalCase, fixture }) {
         unmatchedToolCallIds.length === 0 &&
         details.noBlindRetry &&
         details.doubleRestartIdempotent &&
-        (expectedUnknown ? unknown.length === 1 : unknown.length === 0)
+        (expectedUnknown ? unknown.length === 1 : unknown.length === 0) &&
+        caseInvariant
     return {
         success,
         targetToolCalled: calls.length > 0,

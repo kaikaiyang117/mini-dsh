@@ -12,12 +12,32 @@ test('crash recovery suite uses the real process restart matrix', async () => {
         assert.equal(result.scoreDetails.protocolComplete, true)
         assert.equal(result.scoreDetails.sequenceContinuous, true)
     }
+    assert.equal(
+        report.results.find((result) => result.caseName === 'crash-after-user-message').scoreDetails
+            .externalEffectCount,
+        0,
+    )
+    assert.equal(
+        report.results.find((result) => result.caseName === 'crash-after-tool-call-commit')
+            .scoreDetails.externalEffectCount,
+        0,
+    )
     const sideEffect = report.results.find(
         (result) => result.caseName === 'crash-after-side-effect-start',
     )
     assert.equal(sideEffect.scoreDetails.recoveredUnknownCount, 1)
     assert.equal(sideEffect.scoreDetails.sideEffectExecutionCountAfterResume, 0)
     assert.equal(sideEffect.scoreDetails.doubleRestartIdempotent, true)
+    const durableResult = report.results.find(
+        (result) => result.caseName === 'crash-after-tool-result-commit',
+    )
+    assert.equal(durableResult.scoreDetails.resultFidelity, true)
+    assert.equal(durableResult.scoreDetails.doubleRestartIdempotent, true)
+    assert.equal(durableResult.scoreDetails.externalEffectCount, 1)
+    const torn = report.results.find((result) => result.caseName === 'torn-tool-result-tail')
+    assert.equal(torn.scoreDetails.tornTailWritten, true)
+    assert.equal(torn.scoreDetails.tornTailValidBeforeCrash, true)
+    assert.equal(torn.scoreDetails.tornTailRecovered, true)
 })
 
 test('crash recovery functional report is deterministic apart from duration', async () => {

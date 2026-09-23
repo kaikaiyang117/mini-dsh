@@ -1014,9 +1014,9 @@ hard threshold -> stopReason = no_progress
 
 离线 Eval 使用真实 child process、SIGKILL、JsonlSessionStore reopen、torn final-line recovery 和未闭合 Tool Call recovery。非幂等副作用采用 `unknown` / `retryable=false` 的 at-most-no-blind-retry 语义；不宣称 distributed exactly-once。
 
-### Phase 11.3 — MCP Failure 待办
+### Phase 11.3 — MCP Failure ✅
 
-后续验证 MCP disconnect / restart。Phase 11 整体仍未完成。
+使用本地 fake MCP plugin 验证 activation cleanup、server isolation、disconnect/reload、stale Tool snapshot、cleanup retry 和 remote-like Tool execution failure。`ACTIVE` 只表示 Harness-managed plugin Fiber active，不表示远端 MCP endpoint healthy。Phase 11 三个阶段均已完成；Lazy activation、remote transport health 和真实远端 chaos testing 仍属于后续增强。
 
 ---
 
@@ -1083,7 +1083,7 @@ Phase 11.1 Core Runtime Fault Injection ✅
    ↓
 Phase 11.2 Crash / Resume / Side-effect Recovery ✅
    ↓
-Phase 11.3 MCP Failure 待办
+Phase 11.3 MCP Failure ✅
 ```
 
 不要同时让 Coding Agent 修改多个 Phase。
@@ -1185,6 +1185,8 @@ Git 历史应成为“从最小 Harness 一层层做出工程能力”的直接�
 [x] 每个 Run 有结构化 Trace
 [x] 有可重复 Eval Suite
 [x] 有 Fault Injection Cases（Phase 11.1 范围）
+[x] 有 Crash / Resume / Side-effect Recovery Eval（Phase 11.2）
+[x] 有 MCP Failure & Lifecycle Reliability Eval（Phase 11.3）
 [x] Tool Routing、Progress、Context Pressure 与 Long-Horizon 有可重复 Baseline 数据
 [x] Git 历史可以清楚看到每个模块独立实现过程
 ```

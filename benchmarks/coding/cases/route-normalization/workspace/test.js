@@ -1,2 +1,2 @@
-import assert from 'node:assert/strict'; import test from 'node:test'; import { normalizeRoute } from './route.js'
-test('normalizes route', () => { assert.equal(normalizeRoute('//users///42/'), '/users/42'); assert.equal(normalizeRoute('/'), '/') })
+import assert from 'node:assert/strict'; import test from 'node:test'; import { resolveApi } from './routes/api.js'; import { resolveAdmin } from './routes/admin.js'
+test('all route groups use shared normalization', () => { assert.equal(resolveApi('/api//users/'), 'users'); assert.equal(resolveAdmin('//admin///users/'), 'users') })

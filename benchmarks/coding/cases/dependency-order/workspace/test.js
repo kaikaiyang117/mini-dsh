@@ -1,2 +1,2 @@
-import assert from 'node:assert/strict'; import test from 'node:test'; import { dependencyOrder } from './order.js'
-test('dependencies precede consumers', () => { const result = dependencyOrder({ app: ['db'], db: [] }); assert.ok(result.indexOf('db') < result.indexOf('app')) })
+import assert from 'node:assert/strict'; import test from 'node:test'; import { createGraph } from './graph.js'; import { orderPlugins } from './plugins.js'
+test('orders plugins by declared dependencies', () => { const graph = createGraph([{ id: 'app', dependencies: ['api', 'web'] }, { id: 'api', dependencies: ['db'] }, { id: 'web', dependencies: ['db'] }, { id: 'db' }]); const ordered = orderPlugins(graph); assert.ok(ordered.indexOf('db') < ordered.indexOf('api')); assert.ok(ordered.indexOf('api') < ordered.indexOf('app')) })

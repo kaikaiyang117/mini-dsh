@@ -1,1 +1,2 @@
-import { readFile } from 'node:fs/promises'; export async function verify({ workspace }) { const text = await readFile(`${workspace}/cache.js`, 'utf8'); return { passed: text.includes('expiresAt') && text.includes('this.now()'), reason: 'ttl expiration' } }
+import { verifyBehavior } from '../../behavior-verifier.js'
+export function verify({ workspace }) { return verifyBehavior({ workspace, script: `import assert from 'node:assert/strict'; import { Cache } from './cache.js'; let now = 20; const cache = new Cache({ now: () => now }); cache.set('forever', 1); cache.set('live', 2, 5); assert.equal(cache.get('forever'), 1); assert.equal(cache.get('live'), 2); now = 25; assert.equal(cache.get('live'), undefined); assert.equal(cache.get('forever'), 1)` }) }

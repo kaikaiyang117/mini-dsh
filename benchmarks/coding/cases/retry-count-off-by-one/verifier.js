@@ -1,2 +1,2 @@
-import { readFile } from 'node:fs/promises'
-export async function verify({ workspace }) { const text = await readFile(`${workspace}/retry.js`, 'utf8'); return { passed: text.includes('attempt <= maxRetries'), reason: 'retry loop includes final attempt' } }
+import { verifyBehavior } from '../../behavior-verifier.js'
+export function verify({ workspace }) { return verifyBehavior({ workspace, script: `import assert from 'node:assert/strict'; import { runWithRetry } from './retry.js'; let calls = 0; assert.equal(await runWithRetry(async () => { calls++; return 7 }, 0), 7); assert.equal(calls, 1); calls = 0; await assert.rejects(runWithRetry(async () => { calls++; throw Error('fail') }, 2), /fail/); assert.equal(calls, 3)` }) }

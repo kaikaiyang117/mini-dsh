@@ -1,2 +1,2 @@
-import assert from 'node:assert/strict'; import test from 'node:test'; import { Store } from './store.js'
-test('removes old name index', () => { const s = new Store(); s.add({ id: 1, name: 'old' }); s.rename(1, 'new'); assert.equal(s.findByName('old'), undefined); assert.equal(s.findByName('new').id, 1) })
+import assert from 'node:assert/strict'; import test from 'node:test'; import { Repository } from './repository.js'
+test('removes old name index', () => { const repo = new Repository(); repo.add({ id: 1, name: 'old' }); repo.add({ id: 2, name: 'stable' }); repo.rename(1, 'new'); assert.equal(repo.findByName('old'), undefined); assert.equal(repo.findByName('new').id, 1); assert.equal(repo.findByName('stable').id, 2) })

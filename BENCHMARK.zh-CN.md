@@ -4,6 +4,10 @@
 
 B1 包含 16 个正式本地 Coding Case：4 个单文件 bugfix、4 个跨文件 bugfix、4 个 feature，以及 4 个 repo understanding / refactor / long context 任务。之前的 `coding-smoke` 仍作为基础设施冒烟测试保留，与正式 `coding-benchmark` suite 分开。报告用于复现和审计，不用于模型排名或成功率结论。
 
+加载 Case 时会补齐现有 EvalCase 契约：`expected: { completion: 'stop-reason', stopReason: 'completed' }`。Coding scorer 遵守 EvalRunner 的同步接口。对于基线测试失败的 Case，模型必须在修改前留下失败测试记录、修改后留下通过记录；基线已通过的 refactor Case 要求运行并通过测试。Scorer 随后独立执行公开测试、同步隐藏行为 verifier、递归 workspace 策略和 Tool Call / Result 协议校验。
+
+四类 Case 各保持 4 个。05–08 要追踪配置来源、Repository/Cache/Service、Repository/Store/NameIndex，或 Registry 状态与 Runner 实例缓存。13–16 分别包含 request logging、共享路由处理、依赖图加载和验证/导入链路，约有 5–12 个相关实现文件。隐藏 verifier 会运行最终模块并覆盖额外输入；只有明确的 validation refactor Case 会额外检查源码结构。
+
 无需网络和模型调用即可校验所有基线、参考实现、公开测试、隐藏 verifier 和 workspace 策略：
 
 ```bash
@@ -57,6 +61,8 @@ pnpm benchmark:coding -- --model deepseek/deepseek-v4-pro --repeat 3 \
 
 控制台输出每个变体的成功数、样本数、平均步数 / Tool Calls、输入 Token、估算输入、费用和耗时，并给出机器可读报告路径。`.benchmark/` 被 Git 忽略；它与 deterministic synthetic Eval 的 `.eval/` 分开。
 
+Dry-run 不访问网络：`--variants full --repeat 3` 计划 48 个样本，`--variants minimal,full --repeat 3` 计划 96 个样本。
+
 ## 样本与重复
 
 执行顺序固定为 **case → variant → repetition**，不并发。每个 repetition 都创建新的临时 workspace、Session、Agent 和 Trace。`runId` 是独立的 Benchmark 样本 ID；`agentRunId` 是对应 Harness Trace ID，不替代样本 ID。
@@ -83,4 +89,4 @@ MINI_DSH_PRICING_JSON={"deepseek/deepseek-v4-pro":{"inputPer1k":0.001,"outputPer
 
 总预算在**下一个样本开始前**检查 `totalKnownCost >= maxTotalCost`。它不强杀当前 Agent Run，单个样本可能使最终已知费用超过门槛；RunController 的单次 Run 限制与此独立。
 
-普通 `pnpm test` 使用 fake adapter，不发送真实 API 请求；`pnpm benchmark:coding` 不纳入普通 CI。现有 `eval:*` 仍是 Mock LLM 驱动的 deterministic synthetic evaluation，不能与这里的真实模型样本混写或直接比较成功率。
+普通 `pnpm test` 包含一条 fake-provider V1 样本，完整经过 BenchmarkRunner、EvalRunner、生产 AgentLoop、ToolRuntime、workspace 和 scorer，不发送真实 API 请求。CI 也运行离线 16-case validator；真实模型 `pnpm benchmark:coding` 不纳入 CI。现有 `eval:*` 仍是 Mock LLM 驱动的 deterministic synthetic evaluation，不能与真实模型样本混写或直接比较成功率。

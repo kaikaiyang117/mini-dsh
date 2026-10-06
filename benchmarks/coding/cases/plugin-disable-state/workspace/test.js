@@ -1,2 +1,2 @@
-import assert from 'node:assert/strict'; import test from 'node:test'; import { Registry } from './registry.js'; import { run } from './runner.js'
-test('disabled plugin is skipped', () => { const r = new Registry(); r.enable('p'); let calls = 0; const p = { name: 'p', run: () => ++calls }; r.disable('p'); assert.equal(run(r, p), undefined); assert.equal(calls, 0) })
+import assert from 'node:assert/strict'; import test from 'node:test'; import { Registry } from './registry.js'; import { Runner } from './runner.js'; import { createPlugin } from './plugin.js'
+test('runner observes live registry disable state', () => { const registry = new Registry(); let calls = 0; registry.register(createPlugin('p', () => ++calls)); const runner = new Runner(registry); registry.disable('p'); assert.equal(runner.run('p'), undefined); assert.equal(calls, 0); registry.enable('p'); assert.equal(runner.run('p'), 1) })

@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process'
-import { diffWorkspace, snapshotWorkspace } from './workspace.js'
+import { diffWorkspace, snapshotWorkspaceSync } from './workspace.js'
 
-export async function scoreCodingCase({ trace, fixture, evalCase }) {
+export function scoreCodingCase({ trace, fixture, evalCase }) {
     const { workspace, session, initialSnapshot } = fixture.inspectors
     const calls = session.events
         .filter((event) => event.type === 'assistant/tool_calls')
@@ -16,7 +16,7 @@ export async function scoreCodingCase({ trace, fixture, evalCase }) {
         results.length === calls.length &&
         results.every((result) => ids.has(result.data.toolCallId)) &&
         calls.every((call) => counts.get(call.id) === 1)
-    const finalSnapshot = await snapshotWorkspace(workspace)
+    const finalSnapshot = snapshotWorkspaceSync(workspace)
     const diff = diffWorkspace(initialSnapshot, finalSnapshot)
     const unexpectedModifiedFiles = diff.modifiedFiles.filter(
         (name) => !evalCase.allowedModifiedFiles.includes(name),
@@ -49,7 +49,7 @@ export async function scoreCodingCase({ trace, fixture, evalCase }) {
     let verifierDetails = null
     let hiddenTestsPassed = false
     try {
-        verifierDetails = await evalCase.verifier({ workspace, initialSnapshot, finalSnapshot })
+        verifierDetails = evalCase.verifier({ workspace, initialSnapshot, finalSnapshot })
         hiddenTestsPassed = verifierDetails === true || verifierDetails?.passed === true
         verifierDetails = {
             passed: hiddenTestsPassed,
@@ -77,6 +77,10 @@ export async function scoreCodingCase({ trace, fixture, evalCase }) {
         protocolComplete,
         verifierDetails,
     }
+    const testEvidenceValid =
+        evalCase.baselineMode === 'passing-tests'
+            ? details.agentObservedPassingTest
+            : details.agentObservedFailingTest && details.agentObservedPassingTest
     return {
         success:
             trace.stopReason === 'completed' &&
@@ -85,6 +89,7 @@ export async function scoreCodingCase({ trace, fixture, evalCase }) {
             hiddenTestsPassed &&
             workspacePolicyValid &&
             details.agentRanTests &&
+            testEvidenceValid &&
             protocolComplete,
         details,
     }

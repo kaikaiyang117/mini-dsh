@@ -1,2 +1,2 @@
-import assert from 'node:assert/strict'; import test from 'node:test'; import { Cache } from './cache.js'; import { Repository } from './repository.js'
-test('refreshes cached entries after writes', () => { const cache = new Cache(); const repo = new Repository(cache); repo.set('x', 1); assert.equal(repo.get('x'), 1); repo.set('x', 2); assert.equal(repo.get('x'), 2) })
+import assert from 'node:assert/strict'; import test from 'node:test'; import { Cache } from './cache.js'; import { Repository } from './repository.js'; import { Service } from './service.js'
+test('service updates cannot leave repository cache stale', () => { const repo = new Repository(new Cache()); const service = new Service(repo); service.update('x', 1); service.update('y', 8); assert.equal(service.read('x'), 1); assert.equal(service.read('y'), 8); service.update('x', 2); assert.equal(service.read('x'), 2); assert.equal(service.read('y'), 8) })

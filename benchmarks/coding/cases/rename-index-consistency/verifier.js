@@ -1,1 +1,2 @@
-import { readFile } from 'node:fs/promises'; export async function verify({ workspace }) { const text = await readFile(`${workspace}/store.js`, 'utf8'); return { passed: text.includes('this.byName.delete(item.name)'), reason: 'old index removed' } }
+import { verifyBehavior } from '../../behavior-verifier.js'
+export function verify({ workspace }) { return verifyBehavior({ workspace, script: `import assert from 'node:assert/strict'; import { Repository } from './repository.js'; const repo = new Repository(); repo.add({ id: 'one', name: 'before' }); repo.add({ id: 'two', name: 'kept' }); repo.rename('one', 'after'); assert.equal(repo.findByName('before'), undefined); assert.equal(repo.findByName('after').id, 'one'); assert.equal(repo.findByName('kept').id, 'two')` }) }

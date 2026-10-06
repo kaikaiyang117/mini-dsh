@@ -1,1 +1,2 @@
-import { readFile } from 'node:fs/promises'; export async function verify({ workspace }) { const text = await readFile(`${workspace}/config.js`, 'utf8'); return { passed: text.includes('{ ...defaults, ...file, ...runtime }'), reason: 'precedence order' } }
+import { verifyBehavior } from '../../behavior-verifier.js'
+export function verify({ workspace }) { return verifyBehavior({ workspace, script: `import assert from 'node:assert/strict'; import { resolveConfig } from './src/config/resolve.js'; assert.deepEqual(resolveConfig({ file: { timeout: 2, extra: true, mode: 'file' }, runtime: { timeout: 3, own: true } }), { retries: 2, timeout: 3, mode: 'file', extra: true, own: true }); assert.equal(resolveConfig({ runtime: { retries: 0 } }).retries, 0)` }) }

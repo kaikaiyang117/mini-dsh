@@ -1,1 +1,1 @@
-export function run(registry, plugin) { return plugin.run() }
+export class Runner { constructor(registry) { this.registry = registry; this.instances = new Map(registry.listEnabled().map((plugin) => [plugin.name, plugin])) } run(name, ...args) { const plugin = this.instances.get(name); if (!plugin) return undefined; return plugin.run(...args) } }

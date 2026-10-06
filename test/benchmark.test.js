@@ -166,11 +166,26 @@ test('CLI parses repeated and comma-separated filters and dry-run never contacts
             {},
         )
         assert.equal(result, null)
+        assert.match(output, /planned runs: 96/)
+        output = ''
+        await runCodingBenchmarkCli(
+            [
+                '--dry-run',
+                '--model',
+                'deepseek/deepseek-v4-pro',
+                '--variants',
+                'full',
+                '--repeat',
+                '3',
+            ],
+            {},
+        )
     } finally {
         console.log = originalLog
         globalThis.fetch = originalFetch
     }
-    assert.match(output, /planned runs: 96/)
+    assert.match(output, /cases: 16 /)
+    assert.match(output, /planned runs: 48/)
     assert.match(output, /model: deepseek\/deepseek-v4-pro/)
 })
 

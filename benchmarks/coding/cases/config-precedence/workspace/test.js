@@ -1,2 +1,2 @@
-import assert from 'node:assert/strict'; import test from 'node:test'; import { resolveConfig } from './config.js'
-test('runtime wins over file and defaults', () => assert.deepEqual(resolveConfig({ port: 1, mode: 'd' }, { port: 2, mode: 'f' }, { port: 3 }), { port: 3, mode: 'f' }))
+import assert from 'node:assert/strict'; import test from 'node:test'; import { resolveConfig } from './src/config/resolve.js'
+test('runtime wins over file and defaults across config sources', () => { assert.deepEqual(resolveConfig({ file: { timeout: 2000, mode: 'file' }, runtime: { timeout: 3000 } }), { retries: 2, timeout: 3000, mode: 'file' }); assert.equal(resolveConfig({ runtime: { retries: 0 } }).retries, 0) })

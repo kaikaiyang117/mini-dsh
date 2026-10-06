@@ -1,1 +1,2 @@
-import { readFile } from 'node:fs/promises'; export async function verify({ workspace }) { const text = await readFile(`${workspace}/list.js`, 'utf8'); return { passed: text.includes("items.filter((item) => !status || item.status === status)"), reason: 'filter before slice' } }
+import { verifyBehavior } from '../../behavior-verifier.js'
+export function verify({ workspace }) { return verifyBehavior({ workspace, script: `import assert from 'node:assert/strict'; import { listItems } from './list.js'; const rows = [{ id: 1, status: 'a' }, { id: 2, status: 'b' }, { id: 3, status: 'a' }, { id: 4, status: 'a' }]; assert.deepEqual(listItems(rows, { status: 'a', offset: 1, limit: 1 }), [{ id: 3, status: 'a' }]); assert.deepEqual(listItems(rows, { status: 'missing' }), [])` }) }

@@ -70,6 +70,10 @@ export function validateCaseSpec(spec) {
         throw new Error(`invalid file policy for ${spec.name}`)
     if (typeof spec.verifier !== 'function' || typeof spec.reference?.apply !== 'function')
         throw new Error(`missing verifier/reference for ${spec.name}`)
+    if (spec.verifier.constructor.name === 'AsyncFunction')
+        throw new Error(`case verifier must be synchronous: ${spec.name}`)
+    if (spec.tags.some((tag) => typeof tag !== 'string' || !tag))
+        throw new Error(`invalid tags for ${spec.name}`)
     return spec
 }
 
@@ -79,7 +83,11 @@ export function loadCodingCases() {
         validateCaseSpec(spec)
         if (names.has(spec.name)) throw new Error(`duplicate case: ${spec.name}`)
         names.add(spec.name)
-        return { ...spec, workspaceDir: decodeURIComponent(spec.workspaceDir) }
+        return {
+            ...spec,
+            expected: { completion: 'stop-reason', stopReason: 'completed' },
+            workspaceDir: decodeURIComponent(spec.workspaceDir),
+        }
     })
 }
 

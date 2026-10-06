@@ -1,0 +1,1 @@
+export class NameIndex { constructor() { this.names = new Map() } add(item) { this.names.set(item.name, item.id) } remove(name) { this.names.delete(name) } find(name) { return this.names.get(name) } }

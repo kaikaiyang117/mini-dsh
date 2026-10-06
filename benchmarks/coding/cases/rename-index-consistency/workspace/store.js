@@ -1,1 +1,2 @@
-export class Store { constructor() { this.items = new Map(); this.byName = new Map() } add(item) { this.items.set(item.id, item); this.byName.set(item.name, item) } rename(id, name) { const item = this.items.get(id); item.name = name; this.byName.set(name, item) } findByName(name) { return this.byName.get(name) } }
+import { NameIndex } from './name-index.js'
+export class Store { constructor() { this.items = new Map(); this.byName = new NameIndex() } add(item) { this.items.set(item.id, item); this.byName.add(item) } rename(id, name) { const item = this.items.get(id); item.name = name; this.byName.add(item) } findByName(name) { const id = this.byName.find(name); return id === undefined ? undefined : this.items.get(id) } }

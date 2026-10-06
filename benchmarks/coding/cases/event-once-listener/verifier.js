@@ -1,1 +1,2 @@
-import { readFile } from 'node:fs/promises'; export async function verify({ workspace }) { const text = await readFile(`${workspace}/events.js`, 'utf8'); return { passed: text.includes('once(name, fn)') && text.includes('this.off(name, wrapper)'), reason: 'once lifecycle' } }
+import { verifyBehavior } from '../../behavior-verifier.js'
+export function verify({ workspace }) { return verifyBehavior({ workspace, script: `import assert from 'node:assert/strict'; import { EventBus } from './events.js'; const bus = new EventBus(); let once = 0; let always = 0; bus.once('x', () => once++); bus.on('x', () => always++); bus.emit('other'); bus.emit('x'); bus.emit('x'); assert.equal(once, 1); assert.equal(always, 2)` }) }

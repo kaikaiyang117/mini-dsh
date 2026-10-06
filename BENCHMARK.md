@@ -4,6 +4,10 @@ English | [中文](./BENCHMARK.zh-CN.md)
 
 B1 contains 16 formal local Coding cases: four single-file bugfixes, four cross-file bugfixes, four features, and four repository-understanding / refactor / long-context tasks. The earlier `coding-smoke` case remains an infrastructure smoke test; it is separate from the formal `coding-benchmark` suite. Reports are reproducibility artifacts and do not support model rankings or success-rate claims.
 
+Each loaded case is converted to the existing EvalCase contract with `expected: { completion: 'stop-reason', stopReason: 'completed' }`. The Coding scorer is synchronous to match EvalRunner. It records a failing public-test run before edits and a passing run afterward for failing-baseline cases; the passing-baseline refactor case must show a passing run. It then independently runs public tests, a synchronous hidden behavioral verifier, recursive workspace policy checks, and Tool Call / Result protocol checks.
+
+The four categories stay balanced at four cases each. Cases 05–08 require tracing config sources, repository/cache/service interaction, a repository/store/name index, or plugin registry state and runner instance caching. Cases 13–16 include 5–12 relevant implementation files across request logging, shared route handling, dependency graph loading, and validation/import flows. Hidden verifiers execute the resulting modules against extra cases; only the explicit validation refactor case also checks source structure.
+
 Validate all case baselines, reference solutions, public tests, hidden verifiers, and workspace policies without a network or model call:
 
 ```bash
@@ -55,6 +59,8 @@ pnpm benchmark:coding -- --model deepseek/deepseek-v4-pro --repeat 3 \
 
 The console shows each variant's successes, samples, average steps / Tool Calls, input tokens, estimated input, cost, and duration, followed by the machine-readable report path. Git ignores `.benchmark/`, separately from `.eval/` for deterministic synthetic Eval.
 
+Dry-run planning is offline: `--variants full --repeat 3` plans 48 samples, while `--variants minimal,full --repeat 3` plans 96.
+
 ## Samples and Repetitions
 
 Execution order is **case → variant → repetition**, without parallel runs. Every repetition creates a new temporary workspace, Session, Agent, and Trace. `runId` identifies the Benchmark sample; `agentRunId` identifies its Harness Trace.
@@ -81,4 +87,4 @@ Those numbers illustrate the format; **they are not a current price quote**. Sup
 
 Before each next sample, the global budget checks `totalKnownCost >= maxTotalCost`. It does not kill an in-flight Agent Run, so one completed sample can put total cost above the ceiling. RunController's individual Run limits remain separate.
 
-Ordinary `pnpm test` uses a fake adapter and never calls the real API. `pnpm benchmark:coding` is not part of normal CI. Existing `eval:*` suites are Mock LLM deterministic synthetic evaluation and should not be mixed with real-model samples or used for direct success-rate comparisons.
+Ordinary `pnpm test` includes a fake-provider V1 sample through BenchmarkRunner, EvalRunner, production AgentLoop, ToolRuntime, workspace, and scorer; it never calls a real API. CI also runs the offline 16-case validator. `pnpm benchmark:coding` real-model runs are not part of normal CI. Existing `eval:*` suites are Mock LLM deterministic synthetic evaluation and should not be mixed with real-model samples or used for direct success-rate comparisons.

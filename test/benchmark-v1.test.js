@@ -248,3 +248,49 @@ test('synchronous scorer rejects hidden failure, extra files, test tampering or 
     assert.equal(score.details.protocolComplete, false)
     await fs.rm(protocolFixture.workspace, { recursive: true, force: true })
 })
+
+test('coding scorer retains compact test evidence when Tool output is large', async () => {
+    const spec = loadCodingCases()[0]
+    const fixture = await fixtureFor(spec)
+    await spec.reference.apply({ workspace: fixture.workspace })
+    const events = passingBash(spec)
+    attachAgentEvents(fixture, {
+        ...events,
+        results: events.results.map((event) => ({
+            ...event,
+            data: {
+                ...event.data,
+                content: JSON.stringify({
+                    command: spec.publicTestCommand,
+                    exitCode: JSON.parse(event.data.content).exitCode,
+                    stdout: 'large test output '.repeat(500),
+                    stderr: 'diagnostic output '.repeat(500),
+                    cwd: '/private/workspace',
+                }),
+            },
+        })),
+    })
+
+    try {
+        const score = scoreCodingCase({
+            trace: { stopReason: 'completed' },
+            fixture,
+            evalCase: spec,
+        })
+        assert.equal(score.success, true)
+        assert.equal(score.details.agentObservedFailingTest, true)
+        assert.equal(score.details.agentObservedPassingTest, true)
+        assert.deepEqual(
+            score.details.agentTestRuns.map(({ command, exitCode }) => ({ command, exitCode })),
+            [
+                { command: spec.publicTestCommand, exitCode: 1 },
+                { command: spec.publicTestCommand, exitCode: 0 },
+            ],
+        )
+        assert.ok(JSON.stringify(score.details).length < 2000)
+        assert.equal(JSON.stringify(score.details).includes('large test output'), false)
+        assert.equal(JSON.stringify(score.details).includes('/private/workspace'), false)
+    } finally {
+        await fs.rm(fixture.workspace, { recursive: true, force: true })
+    }
+})

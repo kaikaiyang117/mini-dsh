@@ -38,6 +38,12 @@ export function scoreCodingCase({ trace, fixture, evalCase }) {
             }
         })
         .filter((value) => value?.command === evalCase.publicTestCommand)
+        .map(({ command, exitCode, signal, durationMs }) => ({
+            command,
+            exitCode,
+            signal,
+            durationMs,
+        }))
     const agentObservedFailingTest = agentTestRuns.some((run) => run.exitCode !== 0)
     const agentObservedPassingTest = agentTestRuns.some((run) => run.exitCode === 0)
     const publicRun = spawnSync('bash', ['-lc', evalCase.publicTestCommand], {

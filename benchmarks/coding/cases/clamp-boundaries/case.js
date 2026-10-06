@@ -1,0 +1,3 @@
+import { verify } from './verifier.js'
+import { applyReference } from './reference/solution.js'
+export const caseSpec = { name: 'clamp-boundaries', title: 'Clamp boundaries', category: 'single-file-bugfix', difficulty: 'easy', tags: ['boundaries', 'math'], prompt: 'Fix the clamp helper so values below the minimum and above the maximum are handled correctly. Keep the public API and module format unchanged, and run the provided tests before and after the fix.', workspaceDir: new URL('./workspace', import.meta.url).pathname, publicTestCommand: 'env -u NODE_TEST_CONTEXT node --test test.js', allowedModifiedFiles: ['calculator.js'], allowedCreatedFiles: [], baselineMode: 'failing-tests', verifier: verify, reference: { apply: applyReference } }

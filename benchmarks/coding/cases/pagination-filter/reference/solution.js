@@ -1,0 +1,1 @@
+import { writeFile } from 'node:fs/promises'; export async function applyReference({ workspace }) { await writeFile(`${workspace}/list.js`, `export function listItems(items, { status, offset = 0, limit = items.length } = {}) { const filtered = items.filter((item) => !status || item.status === status); return filtered.slice(offset, offset + limit) }\n`) }

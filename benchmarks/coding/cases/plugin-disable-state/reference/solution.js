@@ -1,0 +1,1 @@
+import { readFile, writeFile } from 'node:fs/promises'; export async function applyReference({ workspace }) { const p = `${workspace}/runner.js`; await writeFile(p, (await readFile(p, 'utf8')).replace('return plugin.run()', "if (!registry.isEnabled(plugin.name)) return undefined; return plugin.run()")) }

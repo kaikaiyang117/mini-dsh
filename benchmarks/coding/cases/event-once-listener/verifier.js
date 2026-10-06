@@ -1,0 +1,1 @@
+import { readFile } from 'node:fs/promises'; export async function verify({ workspace }) { const text = await readFile(`${workspace}/events.js`, 'utf8'); return { passed: text.includes('once(name, fn)') && text.includes('this.off(name, wrapper)'), reason: 'once lifecycle' } }

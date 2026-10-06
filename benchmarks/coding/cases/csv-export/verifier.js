@@ -1,0 +1,1 @@
+import { readFile } from 'node:fs/promises'; export async function verify({ workspace }) { const text = await readFile(`${workspace}/csv.js`, 'utf8'); return { passed: text.includes('replaceAll') && text.includes('test(text)'), reason: 'csv escaping' } }

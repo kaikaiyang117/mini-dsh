@@ -1,0 +1,1 @@
+import { readFile, writeFile } from 'node:fs/promises'; export async function applyReference({ workspace }) { const p = `${workspace}/config.js`; await writeFile(p, (await readFile(p, 'utf8')).replace('{ ...defaults, ...runtime, ...file }', '{ ...defaults, ...file, ...runtime }')) }

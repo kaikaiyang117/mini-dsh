@@ -1,0 +1,1 @@
+export class Store { constructor() { this.items = new Map(); this.byName = new Map() } add(item) { this.items.set(item.id, item); this.byName.set(item.name, item) } rename(id, name) { const item = this.items.get(id); item.name = name; this.byName.set(name, item) } findByName(name) { return this.byName.get(name) } }

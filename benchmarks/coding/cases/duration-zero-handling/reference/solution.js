@@ -1,0 +1,1 @@
+import { readFile, writeFile } from 'node:fs/promises'; export async function applyReference({ workspace }) { const p = `${workspace}/options.js`; await writeFile(p, (await readFile(p, 'utf8')).replace('options.duration || 1000', 'options.duration ?? 1000')) }

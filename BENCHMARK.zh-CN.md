@@ -1,8 +1,14 @@
-# 真实模型 Benchmark 基础设施（B0）
+# Coding Benchmark V1
 
 [English](./BENCHMARK.md) | 中文
 
-B0 只包含一个 `bugfix-single-file` Coding Smoke Case，用于验证真实 Provider、隔离重复执行、成本保护和报告流程。它**不是正式 Coding Benchmark V1**，不支持据此声称真实模型成功率或比较模型能力。
+B1 包含 16 个正式本地 Coding Case：4 个单文件 bugfix、4 个跨文件 bugfix、4 个 feature，以及 4 个 repo understanding / refactor / long context 任务。之前的 `coding-smoke` 仍作为基础设施冒烟测试保留，与正式 `coding-benchmark` suite 分开。报告用于复现和审计，不用于模型排名或成功率结论。
+
+无需网络和模型调用即可校验所有基线、参考实现、公开测试、隐藏 verifier 和 workspace 策略：
+
+```bash
+pnpm benchmark:coding:validate
+```
 
 ## 架构
 
@@ -32,7 +38,7 @@ pnpm benchmark:coding -- --dry-run --model deepseek/deepseek-v4-pro --repeat 3
 
 ```bash
 pnpm benchmark:coding -- --model deepseek/deepseek-v4-pro --repeat 3 \
-  --variants minimal,full --case bugfix-single-file \
+  --variants minimal,full --case clamp-boundaries \
   --output .benchmark/coding.json
 ```
 
@@ -55,7 +61,7 @@ pnpm benchmark:coding -- --model deepseek/deepseek-v4-pro --repeat 3 \
 
 执行顺序固定为 **case → variant → repetition**，不并发。每个 repetition 都创建新的临时 workspace、Session、Agent 和 Trace。`runId` 是独立的 Benchmark 样本 ID；`agentRunId` 是对应 Harness Trace ID，不替代样本 ID。
 
-Fixture 只写入 `calculator.js` 和 `calculator.test.js`。模型需要搜索、读取、在修改前运行失败测试、修改目标文件、再运行通过的测试。Scorer 检查测试前后结果、目标文件 diff、额外文件、读取 / 搜索和 Tool Call / Result 配对。Bash 只允许执行 `env -u NODE_TEST_CONTEXT node --test calculator.test.js`，编辑只允许目标文件；case 不安装依赖、不访问网络，测试只用 Node 内置模块。
+每个正式 Case 都有公开 workspace、公开测试命令和明确文件策略；隐藏 verifier/reference 保存在 agent workspace 之外。通用 scorer 会独立重跑公开测试、递归检查 workspace diff、校验 Tool Call / Result 配对并调用隐藏 verifier。Fixture 使用生产 Cordis / AgentLoop / Session / Trace 栈和真实 Provider Plugin；校验命令本身不会调用 Provider。
 
 Benchmark 自动批准仅限自己创建的临时工作区中的工具操作，结束后删除该工作区。这是应用层策略，**不是 OS sandbox**；不要将这个模式直接用于不受信任的代码或其他工作区。
 

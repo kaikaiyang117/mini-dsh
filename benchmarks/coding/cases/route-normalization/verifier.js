@@ -1,0 +1,1 @@
+import { readFile } from 'node:fs/promises'; export async function verify({ workspace }) { const text = await readFile(`${workspace}/route.js`, 'utf8'); return { passed: text.includes('replace') && text.includes("endsWith('/')"), reason: 'route normalization' } }

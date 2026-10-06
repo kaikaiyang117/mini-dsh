@@ -1,0 +1,1 @@
+export class EventBus { constructor() { this.listeners = new Map() } on(name, fn) { const list = this.listeners.get(name) ?? []; list.push(fn); this.listeners.set(name, list) } emit(name, value) { for (const fn of this.listeners.get(name) ?? []) fn(value) } }

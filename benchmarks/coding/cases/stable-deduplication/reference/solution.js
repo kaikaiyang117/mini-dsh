@@ -1,0 +1,1 @@
+import { readFile, writeFile } from 'node:fs/promises'; export async function applyReference({ workspace }) { const p = `${workspace}/dedupe.js`; await writeFile(p, (await readFile(p, 'utf8')).replace('[...new Set(values)].sort()', '[...new Set(values)]')) }

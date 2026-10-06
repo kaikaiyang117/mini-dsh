@@ -212,7 +212,7 @@ MINI_DSH_MAX_CONTEXT_TOKENS=null
 
 ## 文档导航
 
-真实模型 Benchmark 基础设施（B0）仅提供一个 Coding Smoke Case，使用方法与实验边界见 [BENCHMARK.zh-CN.md](./BENCHMARK.zh-CN.md)。该 Smoke Case 不构成正式 Coding Benchmark 结论。
+真实模型 Coding Benchmark V1 包含 16 个可复现的本地案例，覆盖 bugfix、feature、navigation 和 refactor。案例契约、校验命令和实验边界见 [BENCHMARK.zh-CN.md](./BENCHMARK.zh-CN.md)；报告是基础设施输出，不代表模型排名。
 
 | 文档 | 内容 |
 | --- | --- |

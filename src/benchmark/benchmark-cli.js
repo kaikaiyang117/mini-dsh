@@ -1,5 +1,5 @@
 import dotenv from 'dotenv'
-import { createCodingBenchmarkSuite } from '../../benchmarks/coding/suite.js'
+import { createCodingBenchmarkV1Suite } from '../../benchmarks/coding/suite.js'
 import { pricingFromEnv } from '../core/cost-estimator.js'
 import { writeJsonReport } from '../eval/eval-reporter.js'
 import { parseBenchmarkArgs, selectBenchmarkMatrix } from './benchmark-config.js'
@@ -12,7 +12,7 @@ export async function runCodingBenchmarkCli(args = process.argv.slice(2), env = 
         args.filter((arg) => arg !== '--'),
         env,
     )
-    const suite = createCodingBenchmarkSuite()
+    const suite = createCodingBenchmarkV1Suite()
     const matrix = selectBenchmarkMatrix(suite, config)
     if (config.dryRun) {
         console.log(

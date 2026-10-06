@@ -1,0 +1,1 @@
+export class Repository { constructor(cache) { this.cache = cache; this.values = new Map() } get(key) { const cached = this.cache.get(key); if (cached !== undefined) return cached; const value = this.values.get(key); this.cache.set(key, value); return value } set(key, value) { this.values.set(key, value) } }

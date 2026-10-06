@@ -1,0 +1,1 @@
+import { writeFile } from 'node:fs/promises'; export async function applyReference({ workspace }) { await writeFile(`${workspace}/route.js`, `export function normalizeRoute(path) { const normalized = path.replace(/\\/+/g, '/'); return normalized.length > 1 && normalized.endsWith('/') ? normalized.slice(0, -1) : normalized }\n`) }

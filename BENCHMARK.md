@@ -1,8 +1,14 @@
-# Real-Model Benchmark Foundation (B0)
+# Coding Benchmark V1
 
 English | [中文](./BENCHMARK.zh-CN.md)
 
-B0 contains one `bugfix-single-file` Coding Smoke Case. It verifies real-provider wiring, isolated repetitions, cost protection, and reporting. It is **not a formal Coding Benchmark V1** and does not support claims about model success rates or rankings.
+B1 contains 16 formal local Coding cases: four single-file bugfixes, four cross-file bugfixes, four features, and four repository-understanding / refactor / long-context tasks. The earlier `coding-smoke` case remains an infrastructure smoke test; it is separate from the formal `coding-benchmark` suite. Reports are reproducibility artifacts and do not support model rankings or success-rate claims.
+
+Validate all case baselines, reference solutions, public tests, hidden verifiers, and workspace policies without a network or model call:
+
+```bash
+pnpm benchmark:coding:validate
+```
 
 ## Architecture
 
@@ -32,7 +38,7 @@ A real run needs `DEEPSEEK_API_KEY`. The existing DeepSeek plugin registers on `
 
 ```bash
 pnpm benchmark:coding -- --model deepseek/deepseek-v4-pro --repeat 3 \
-  --variants minimal,full --case bugfix-single-file \
+  --variants minimal,full --case clamp-boundaries \
   --output .benchmark/coding.json
 ```
 
@@ -53,7 +59,7 @@ The console shows each variant's successes, samples, average steps / Tool Calls,
 
 Execution order is **case → variant → repetition**, without parallel runs. Every repetition creates a new temporary workspace, Session, Agent, and Trace. `runId` identifies the Benchmark sample; `agentRunId` identifies its Harness Trace.
 
-The fixture writes only `calculator.js` and `calculator.test.js`. The model must search, read, run a failing test before editing, change the target file, then rerun a passing test. The scorer checks both test outcomes, the target diff, extra files, reads / search, and Tool Call / Result pairing. Bash permits only `env -u NODE_TEST_CONTEXT node --test calculator.test.js`; edits are limited to the target file. The case installs nothing, performs no network operation, and uses Node built-ins for tests.
+Each formal case has a public workspace, public test command, explicit file policy, and hidden verifier/reference assets kept outside the agent workspace. The generic scorer independently reruns public tests, checks recursive workspace diffs and Tool Call / Result pairing, and invokes the hidden verifier. The fixture uses the production Cordis / AgentLoop / Session / Trace stack with a real provider plugin; validation itself never calls a provider.
 
 Automatic approval applies only to Benchmark-created temporary workspaces, which are removed afterward. This is application-level policy, **not OS isolation**. Do not use this mode directly for untrusted code or other workspaces.
 

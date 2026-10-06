@@ -170,7 +170,7 @@ test('CLI parses repeated and comma-separated filters and dry-run never contacts
         console.log = originalLog
         globalThis.fetch = originalFetch
     }
-    assert.match(output, /planned runs: 6/)
+    assert.match(output, /planned runs: 96/)
     assert.match(output, /model: deepseek\/deepseek-v4-pro/)
 })
 

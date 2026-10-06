@@ -1,0 +1,1 @@
+export class Registry { constructor() { this.states = new Map() } enable(name) { this.states.set(name, true) } disable(name) { this.states.set(name, false) } isEnabled(name) { return this.states.get(name) === true } }

@@ -29,6 +29,7 @@ jobs:
                     - eval:fault-injection
                     - eval:crash-recovery
                     - eval:mcp-failure
+                    - benchmark:coding:validate
         steps:
             - name: Check out repository
               uses: actions/checkout@v4

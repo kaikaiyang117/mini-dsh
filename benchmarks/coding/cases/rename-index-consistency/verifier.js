@@ -1,0 +1,1 @@
+import { readFile } from 'node:fs/promises'; export async function verify({ workspace }) { const text = await readFile(`${workspace}/store.js`, 'utf8'); return { passed: text.includes('this.byName.delete(item.name)'), reason: 'old index removed' } }

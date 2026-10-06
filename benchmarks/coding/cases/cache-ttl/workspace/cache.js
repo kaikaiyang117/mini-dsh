@@ -1,0 +1,1 @@
+export class Cache { constructor({ now = Date.now } = {}) { this.now = now; this.values = new Map() } set(key, value, ttl) { this.values.set(key, { value, ttl }) } get(key) { return this.values.get(key)?.value } }

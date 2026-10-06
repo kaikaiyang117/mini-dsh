@@ -1,0 +1,1 @@
+import { readFile } from 'node:fs/promises'; export async function verify({ workspace }) { const text = await readFile(`${workspace}/redact.js`, 'utf8'); return { passed: text.includes('Array.isArray') && text.includes('redact(item)'), reason: 'recursive redaction' } }

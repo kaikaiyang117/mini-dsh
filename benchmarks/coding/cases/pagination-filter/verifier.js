@@ -1,0 +1,1 @@
+import { readFile } from 'node:fs/promises'; export async function verify({ workspace }) { const text = await readFile(`${workspace}/list.js`, 'utf8'); return { passed: text.includes("items.filter((item) => !status || item.status === status)"), reason: 'filter before slice' } }

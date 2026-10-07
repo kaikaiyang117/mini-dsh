@@ -25,7 +25,13 @@ export function apply(ctx, config = {}) {
 
             const body = {
                 model,
-                messages: [...(system ? [{ role: 'system', content: system }] : []), ...messages],
+                messages: [
+                    ...(system ? [{ role: 'system', content: system }] : []),
+                    ...prepareDeepSeekMessages(messages, {
+                        thinking,
+                        hasTools: Boolean(tools?.length),
+                    }),
+                ],
                 stream: true,
                 thinking: {
                     type: thinking === 'disabled' ? 'disabled' : 'enabled',
@@ -46,6 +52,16 @@ export function apply(ctx, config = {}) {
 
             if (!response.ok) {
                 const text = await response.text()
+                if (
+                    response.status === 400 &&
+                    thinking !== 'disabled' &&
+                    tools?.length &&
+                    text.includes('reasoning_content')
+                ) {
+                    console.error(
+                        `[deepseek] reasoning replay message metadata: ${JSON.stringify(deepSeekMessageMetadata(body.messages))}`,
+                    )
+                }
                 throw new Error(`DeepSeek API ${response.status}: ${text.slice(0, 2000)}`)
             }
 
@@ -55,6 +71,8 @@ export function apply(ctx, config = {}) {
 
             let content = ''
             let reasoningContent = ''
+            let hasReasoningContent = false
+            let reasoningContentWasNull = false
             let usage = null
             const toolCallsMap = new Map()
 
@@ -64,9 +82,14 @@ export function apply(ctx, config = {}) {
                 if (!choice) continue
                 const delta = choice.delta ?? {}
 
-                if (delta.reasoning_content) {
-                    reasoningContent += delta.reasoning_content
-                    onReasoning?.(delta.reasoning_content)
+                if (Object.hasOwn(delta, 'reasoning_content')) {
+                    hasReasoningContent = true
+                    if (typeof delta.reasoning_content === 'string') {
+                        reasoningContent += delta.reasoning_content
+                        if (delta.reasoning_content) onReasoning?.(delta.reasoning_content)
+                    } else if (delta.reasoning_content === null) {
+                        reasoningContentWasNull = true
+                    }
                 }
 
                 if (delta.content) {
@@ -85,9 +108,18 @@ export function apply(ctx, config = {}) {
 
             return {
                 content,
-                reasoningContent: reasoningContent || undefined,
                 toolCalls,
                 usage,
+                ...(thinking !== 'disabled' && hasReasoningContent
+                    ? {
+                          reasoningContent:
+                              reasoningContent.length > 0
+                                  ? reasoningContent
+                                  : reasoningContentWasNull
+                                    ? null
+                                    : '',
+                      }
+                    : {}),
             }
         },
     }
@@ -102,6 +134,32 @@ export function apply(ctx, config = {}) {
             }),
         'register deepseek provider',
     )
+}
+
+/** DeepSeek requires reasoning metadata on every assistant turn in tool-enabled thinking mode. */
+export function prepareDeepSeekMessages(messages, { thinking, hasTools } = {}) {
+    if (thinking === 'disabled' || !hasTools) return messages
+    return messages.map((message) => {
+        if (message.role !== 'assistant') return message
+        if (
+            !Object.hasOwn(message, 'reasoning_content') ||
+            message.reasoning_content === undefined ||
+            message.reasoning_content === null
+        ) {
+            return { ...message, reasoning_content: '' }
+        }
+        return message
+    })
+}
+
+export function deepSeekMessageMetadata(messages) {
+    return messages.map((message, index) => ({
+        index,
+        role: message.role,
+        hasReasoningContent: typeof message.reasoning_content === 'string',
+        hasToolCalls: Array.isArray(message.tool_calls) && message.tool_calls.length > 0,
+        toolCallCount: message.tool_calls?.length ?? 0,
+    }))
 }
 
 export function normalizeUsage(usage) {

@@ -40,7 +40,7 @@ function fakeProvider({ cost = 0.4, calls, withToolError = false } = {}) {
                     calls?.push(requestNumber)
                     return {
                         content: next ? '' : 'The local tests pass.',
-                        reasoningContent: next ? 'PRIVATE_REASONING_SENTINEL' : undefined,
+                        reasoningContent: 'PRIVATE_REASONING_SENTINEL',
                         toolCalls: next
                             ? [{ id: `fake-${requestNumber}`, name: next[0], arguments: next[1] }]
                             : [],

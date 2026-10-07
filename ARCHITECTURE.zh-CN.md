@@ -47,13 +47,13 @@ CLI → AgentRuntime → AgentLoopRuntime
 | --- | --- |
 | `session/start` | 初始会话 metadata |
 | `user/message` | 用户输入 |
-| `assistant/message` | 无 Tool Calls 时的助手文本 |
-| `assistant/tool_calls` | 调用列表、附带文本、Provider 返回的 `reasoningContent` |
+| `assistant/message` | 无 Tool Calls 时的助手文本，以及存在时的 Provider 返回 `reasoningContent` |
+| `assistant/tool_calls` | 调用列表、附带文本，以及存在时的 Provider 返回 `reasoningContent` |
 | `tool/result` | `toolCallId`、工具名、渲染结果、错误信息，以及适用时的恢复 / 跳过标记 |
 | `context/compaction` | 摘要、覆盖区间、压缩策略、前后 token 估算和 `previousCompactionSeq` |
 | `session/reset` | 新上下文视图的起点；旧事件保留 |
 
-Reasoning 的持久化范围是工具调用轮返回的 `reasoningContent`，不是所有内部推理或全部流式片段。
+Provider 要求的 `reasoningContent` 会在 Provider 返回时随 assistant turn 持久化，并从 Durable History 重放。DeepSeek thinking mode 的 tool-enabled 请求会将没有真实 reasoning 的 assistant 消息规范化为 `reasoning_content: null`；Harness 生成的 compaction summary 仍是摘要，不会获得伪造的 reasoning 文本。reasoning 内容不会进入 Benchmark Report 或 UI。
 
 **协议不变式：每个已提交的 Tool Call 最终恰好对应一个 `tool/result`。** 取消或预算不足不能直接丢弃已记录的调用。未执行调用写入 `outcome=not_executed`；已开始但结果未知的调用写入 `outcome=unknown`。该不变式约束 Loop 生成及恢复后的有效历史，不是 Store 对任意外部输入的通用协议校验。
 

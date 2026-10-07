@@ -47,13 +47,13 @@ CLI → AgentRuntime → AgentLoopRuntime
 | --- | --- |
 | `session/start` | Initial session metadata |
 | `user/message` | User input |
-| `assistant/message` | Assistant text when there are no Tool Calls |
-| `assistant/tool_calls` | Calls, accompanying text, and provider-returned `reasoningContent` |
+| `assistant/message` | Assistant text and provider-returned `reasoningContent` when there are no Tool Calls |
+| `assistant/tool_calls` | Calls, accompanying text, and provider-returned `reasoningContent` when present |
 | `tool/result` | `toolCallId`, tool name, rendered result, error information, and applicable recovery / skip markers |
 | `context/compaction` | Summary, covered range, strategy, before/after token estimates, and `previousCompactionSeq` |
 | `session/reset` | Start of a new context view; earlier events remain |
 
-Reasoning persistence covers `reasoningContent` returned on tool-calling turns, not all internal reasoning or every streaming fragment.
+Provider-required `reasoningContent` is persisted on assistant turns when the Provider returns it, then replayed from durable history. DeepSeek thinking mode normalizes assistant messages without real reasoning to `reasoning_content: null` for tool-enabled requests; harness-generated compaction summaries remain summaries and never receive fabricated reasoning text. Reasoning content is not included in Benchmark reports or UI output.
 
 **Protocol invariant: every committed Tool Call must eventually have exactly one matching `tool/result`.** Cancellation or budget exhaustion cannot simply discard a recorded call. Unexecuted calls receive `outcome=not_executed`; started calls with unknown results receive `outcome=unknown`. This invariant describes valid Loop-produced and recovered histories, not universal protocol validation of arbitrary external records by the Store.
 

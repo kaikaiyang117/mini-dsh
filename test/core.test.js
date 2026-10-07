@@ -168,6 +168,44 @@ test('Agent loop completes a model -> tool -> model turn', async () => {
     assert.equal(calls, 2)
 })
 
+test('assistant turns without Provider reasoning stay unchanged on later requests', async () => {
+    const sessions = new SessionRuntime()
+    const systemPrompt = new SystemPromptRuntime()
+    const tools = new ToolRuntime()
+    const llm = new LlmRuntime()
+    const agents = new AgentRuntime()
+    let calls = 0
+    llm.register(
+        'mock',
+        {
+            models: ['no-reasoning'],
+            async chat({ messages }) {
+                calls += 1
+                if (calls === 2) {
+                    const priorAssistant = messages.find(
+                        (message) => message.content === 'first answer',
+                    )
+                    assert.ok(priorAssistant)
+                    assert.equal(Object.hasOwn(priorAssistant, 'reasoning_content'), false)
+                }
+                return { content: calls === 1 ? 'first answer' : 'second answer' }
+            },
+        },
+        { defaultModel: 'no-reasoning' },
+    )
+    const session = await sessions.create()
+    const agent = agents.create({
+        sessionId: session.id,
+        model: 'mock/no-reasoning',
+        loop: new AgentLoopRuntime({ sessions, systemPrompt, tools, llm }),
+    })
+
+    assert.equal(await agent.send('first'), 'first answer')
+    assert.equal(await agent.send('second'), 'second answer')
+    assert.equal(Object.hasOwn(session.events.at(-2).data, 'reasoningContent'), false)
+    await sessions.dispose()
+})
+
 test('Cancelling a multi-tool turn still records a result for every tool_call', async () => {
     const sessions = new SessionRuntime()
     const systemPrompt = new SystemPromptRuntime()

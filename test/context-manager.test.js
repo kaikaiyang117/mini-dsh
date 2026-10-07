@@ -86,7 +86,10 @@ test('ContextManager projects a resumed durable Session from its complete histor
         const first = new SessionRuntime({ store: new JsonlSessionStore({ directory }) })
         const session = await first.create()
         await first.append(session.id, 'user/message', { content: 'persisted question' })
-        await first.append(session.id, 'assistant/message', { content: 'persisted answer' })
+        await first.append(session.id, 'assistant/message', {
+            content: 'persisted answer',
+            reasoningContent: 'persisted assistant reasoning',
+        })
         await first.dispose()
 
         const resumed = new SessionRuntime({ store: new JsonlSessionStore({ directory }) })
@@ -96,7 +99,11 @@ test('ContextManager projects a resumed durable Session from its complete histor
 
         assert.deepEqual(projection.messages, [
             { role: 'user', content: 'persisted question' },
-            { role: 'assistant', content: 'persisted answer' },
+            {
+                role: 'assistant',
+                content: 'persisted answer',
+                reasoning_content: 'persisted assistant reasoning',
+            },
         ])
         assert.equal(projection.metadata.sourceEventCount, 3)
         assert.equal(JSON.stringify(resumed.get(session.id).events), eventsBefore)
@@ -104,6 +111,32 @@ test('ContextManager projects a resumed durable Session from its complete histor
     } finally {
         await fs.rm(directory, { recursive: true, force: true })
     }
+})
+
+test('assistant reasoning projection distinguishes absent, null, empty, and text fields', async () => {
+    const sessions = new SessionRuntime()
+    const session = await sessions.create()
+    await sessions.append(session.id, 'assistant/message', { content: 'absent' })
+    await sessions.append(session.id, 'assistant/message', {
+        content: 'null',
+        reasoningContent: null,
+    })
+    await sessions.append(session.id, 'assistant/message', {
+        content: 'empty',
+        reasoningContent: '',
+    })
+    await sessions.append(session.id, 'assistant/message', {
+        content: 'text',
+        reasoningContent: 'actual reasoning',
+    })
+
+    assert.deepEqual(new ContextManager({ sessions }).project(session.id).messages, [
+        { role: 'assistant', content: 'absent' },
+        { role: 'assistant', content: 'null', reasoning_content: null },
+        { role: 'assistant', content: 'empty', reasoning_content: '' },
+        { role: 'assistant', content: 'text', reasoning_content: 'actual reasoning' },
+    ])
+    await sessions.dispose()
 })
 
 test('parallel Tool results remain model-ordered in ContextManager projection', async () => {

@@ -185,10 +185,12 @@ export class AgentLoopRuntime {
 
                     if (toolCalls.length === 0) {
                         const content = response.content ?? ''
+                        const assistantMessage = { content, runId, stepId }
+                        if (response.reasoningContent !== undefined) {
+                            assistantMessage.reasoningContent = response.reasoningContent
+                        }
                         await this.sessions.append(sessionId, 'assistant/message', {
-                            content,
-                            runId,
-                            stepId,
+                            ...assistantMessage,
                         })
                         if (usageDecision.action === 'stop') {
                             return this.#finishDecision(
@@ -203,13 +205,20 @@ export class AgentLoopRuntime {
                         return content
                     }
 
-                    await this.sessions.append(sessionId, 'assistant/tool_calls', {
+                    const assistantToolCallMessage = {
                         content: response.content ?? null,
-                        reasoningContent: response.reasoningContent,
                         toolCalls,
                         runId,
                         stepId,
-                    })
+                    }
+                    if (response.reasoningContent !== undefined) {
+                        assistantToolCallMessage.reasoningContent = response.reasoningContent
+                    }
+                    await this.sessions.append(
+                        sessionId,
+                        'assistant/tool_calls',
+                        assistantToolCallMessage,
+                    )
 
                     const batchController = new AbortController()
                     const toolSignal = combineAbortSignals(combinedSignal, batchController.signal)

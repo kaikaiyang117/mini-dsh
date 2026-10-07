@@ -32,14 +32,22 @@ export function projectSessionEvents(events) {
         }
 
         if (type === 'assistant/message') {
-            messages.push({ role: 'assistant', content: data.content })
+            messages.push({
+                role: 'assistant',
+                content: data.content,
+                ...(Object.hasOwn(data, 'reasoningContent')
+                    ? { reasoning_content: data.reasoningContent }
+                    : {}),
+            })
         }
 
         if (type === 'assistant/tool_calls') {
             messages.push({
                 role: 'assistant',
                 content: data.content ?? null,
-                ...(data.reasoningContent ? { reasoning_content: data.reasoningContent } : {}),
+                ...(Object.hasOwn(data, 'reasoningContent')
+                    ? { reasoning_content: data.reasoningContent }
+                    : {}),
                 tool_calls: data.toolCalls.map((call) => ({
                     id: call.id,
                     type: 'function',
